@@ -932,6 +932,46 @@ test("conversation mute persists as a local preference", async () => {
   }
 });
 
+test("conversation can be marked unread and resets when read", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    f.app.store.run(
+      "INSERT INTO messages(id,conversation_id,agent_id,role,content,kind,status,created_at) VALUES(?,?,?,?,?,?,?,?)",
+      [
+        "00000000-0000-4000-8000-000000000204",
+        a.conversationId,
+        a.id,
+        "assistant",
+        "A saved update.",
+        "text",
+        "complete",
+        new Date().toISOString(),
+      ],
+    );
+    await f.request(`/conversations/${a.conversationId}`, "PATCH", {
+      markUnread: true,
+    });
+    assert.equal(
+      (await f.request("/state")).conversations.find(
+        (conversation) => conversation.id === a.conversationId,
+      ).unread,
+      1,
+    );
+    await f.request(`/conversations/${a.conversationId}`, "PATCH", {
+      read: true,
+    });
+    assert.equal(
+      (await f.request("/state")).conversations.find(
+        (conversation) => conversation.id === a.conversationId,
+      ).unread,
+      0,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
 test("needs you items resolve without deleting task history", async () => {
   const f = await fixture(async () => ({ text: "response" }));
   try {

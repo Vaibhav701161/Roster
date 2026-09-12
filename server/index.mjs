@@ -422,6 +422,7 @@ export async function createServer({
         archived: z.boolean().optional(),
         muted: z.boolean().optional(),
         read: z.boolean().optional(),
+        markUnread: z.boolean().optional(),
       })
       .parse(req.body);
     if (body.pinned !== undefined)
@@ -442,6 +443,10 @@ export async function createServer({
     if (body.read)
       store.run("UPDATE conversations SET read_at=? WHERE id=?", [
         now(),
+        req.params.id,
+      ]);
+    if (body.markUnread)
+      store.run("UPDATE conversations SET read_at='' WHERE id=?", [
         req.params.id,
       ]);
     changed();

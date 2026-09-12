@@ -912,6 +912,18 @@ export function App() {
                           onClick={() => {
                             act(() =>
                               api(`/conversations/${conv.id}`, "PATCH", {
+                                markUnread: true,
+                              }),
+                            );
+                            setMenu(false);
+                          }}
+                        >
+                          Mark unread
+                        </button>
+                        <button
+                          onClick={() => {
+                            act(() =>
+                              api(`/conversations/${conv.id}`, "PATCH", {
                                 archived: !conv.archived,
                               }),
                             );
