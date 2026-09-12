@@ -15,6 +15,7 @@ import { integrationCheck, taskInspection } from "./worktree.mjs";
 import { refreshIntegrations } from "./integrations.mjs";
 import { inspectProject, saveProjectProfile } from "./projects.mjs";
 import { discoverMcp } from "./mcp.mjs";
+import { createGithubOwnership } from "./github.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
 const short = z.string().trim().min(1).max(100);
@@ -60,6 +61,7 @@ export async function createServer({
   port = Number(process.env.ROSTER_PORT || 4318),
   vault,
   runner,
+  githubClient,
 } = {}) {
   const releaseLock = acquireLock(directory);
   let store;
@@ -80,6 +82,11 @@ export async function createServer({
     logDirectory,
     runner,
   });
+  const githubOwnership = createGithubOwnership(
+    store,
+    (taskId, type, detail) => engine.event(taskId, type, detail),
+    githubClient,
+  );
   const app = express();
   app.disable("x-powered-by");
   app.use((req, res, next) => {
@@ -156,6 +163,9 @@ export async function createServer({
       ),
       memories: store.all("SELECT * FROM memories"),
       integrations: store.all("SELECT * FROM integrations ORDER BY name"),
+      githubOwnership: store.all(
+        "SELECT * FROM github_ownership ORDER BY updated_at DESC LIMIT 100",
+      ),
       mcpConnections: store.all(
         "SELECT * FROM mcp_connections ORDER BY updated_at DESC",
       ),
@@ -199,6 +209,21 @@ export async function createServer({
     const integrations = await refreshIntegrations(store);
     changed();
     res.json({ integrations });
+  });
+  app.post("/api/tasks/:id/github-pull-request", async (req, res) => {
+    const task = must("tasks", req.params.id);
+    const { number } = z
+      .object({ number: z.number().int().positive().max(100000000) })
+      .parse(req.body);
+    const ownership = await githubOwnership.track(task, number);
+    changed();
+    res.json(ownership);
+  });
+  app.post("/api/tasks/:id/github-pull-request/refresh", async (req, res) => {
+    must("tasks", req.params.id);
+    const ownership = await githubOwnership.refresh(req.params.id);
+    changed();
+    res.json(ownership);
   });
   app.post("/api/mcp/discover", async (req, res) => {
     const { url } = z
@@ -526,6 +551,10 @@ export async function createServer({
       receipt: store.one("SELECT * FROM work_receipts WHERE task_id=?", [
         req.params.id,
       ]),
+      githubOwnership: store.all(
+        "SELECT * FROM github_ownership WHERE task_id=? ORDER BY updated_at DESC",
+        [req.params.id],
+      ),
     }),
   );
   app.get("/api/tasks/:id/inspection", async (req, res) => {
@@ -925,6 +954,13 @@ export async function createServer({
   refreshIntegrations(store)
     .then(changed)
     .catch(() => {});
+  const githubHeartbeat = setInterval(() => {
+    githubOwnership
+      .refresh()
+      .then((ownership) => ownership.length && changed())
+      .catch(() => {});
+  }, 60000);
+  githubHeartbeat.unref();
   return {
     app,
     server,
@@ -934,6 +970,7 @@ export async function createServer({
     url: `http://127.0.0.1:${server.address().port}`,
     async close() {
       clearInterval(heartbeat);
+      clearInterval(githubHeartbeat);
       await engine.close();
       for (const res of clients) res.end();
       await new Promise((r) => server.close(r));

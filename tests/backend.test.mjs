@@ -9,9 +9,9 @@ import { createServer } from "../server/index.mjs";
 import { validatePlan } from "../server/engine.mjs";
 import { createVault } from "../server/vault.mjs";
 
-async function fixture(runner) {
+async function fixture(runner, options = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "roster-test-"));
-  const app = await createServer({ directory, port: 0, runner });
+  const app = await createServer({ directory, port: 0, runner, ...options });
   const request = async (route, method = "GET", body) => {
     const response = await fetch(app.url + "/api" + route, {
       method,
@@ -773,6 +773,83 @@ test("integration refresh persists scoped engineering tool status without creden
     assert.equal(
       f.app.store.one("SELECT COUNT(*) count FROM integration_tools").count,
       9,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
+test("GitHub pull request ownership persists actionable CI and review state", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "roster-github-"));
+  execFileSync("git", ["init", "--initial-branch=main"], { cwd: workspace });
+  execFileSync("git", ["config", "user.email", "test@example.invalid"], {
+    cwd: workspace,
+  });
+  execFileSync("git", ["config", "user.name", "Roster test"], {
+    cwd: workspace,
+  });
+  fs.writeFileSync(path.join(workspace, "README.md"), "# fixture\n");
+  execFileSync("git", ["add", "."], { cwd: workspace });
+  execFileSync("git", ["commit", "-m", "initial"], { cwd: workspace });
+  let pullRequest = {
+    number: 482,
+    url: "https://github.com/owner/project/pull/482",
+    state: "OPEN",
+    isDraft: false,
+    mergeStateStatus: "CLEAN",
+    reviewDecision: "CHANGES_REQUESTED",
+    statusCheckRollup: [],
+  };
+  const f = await fixture(async () => ({ text: "Implementation complete." }), {
+    githubClient: {
+      repositoryFromWorkspace: async () => "owner/project",
+      inspectPullRequest: async () => pullRequest,
+    },
+  });
+  try {
+    const alex = await f.request(
+      "/agents",
+      "POST",
+      worker("Alex", { workspace }),
+    );
+    await f.request(`/conversations/${alex.conversationId}/messages`, "POST", {
+      content: "Fix the GitHub ownership fixture.",
+    });
+    const task = await until(() =>
+      f.app.store.one("SELECT * FROM tasks WHERE status='completed'"),
+    );
+    const monitored = await f.request(
+      `/tasks/${task.id}/github-pull-request`,
+      "POST",
+      { number: 482 },
+    );
+    assert.equal(monitored.status, "needs_attention");
+    assert.match(monitored.detail, /Review changes/);
+    assert.equal(
+      f.app.store.one(
+        "SELECT type FROM attention_items WHERE task_id=? AND status='open'",
+        [task.id],
+      ).type,
+      "github_review",
+    );
+    pullRequest = { ...pullRequest, state: "MERGED", reviewDecision: "" };
+    await f.request(
+      `/tasks/${task.id}/github-pull-request/refresh`,
+      "POST",
+      {},
+    );
+    assert.equal(
+      f.app.store.one("SELECT status FROM github_ownership WHERE task_id=?", [
+        task.id,
+      ]).status,
+      "merged",
+    );
+    assert.equal(
+      f.app.store.one(
+        "SELECT COUNT(*) count FROM attention_items WHERE task_id=? AND status='open'",
+        [task.id],
+      ).count,
+      0,
     );
   } finally {
     await f.app.close();

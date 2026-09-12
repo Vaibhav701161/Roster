@@ -108,6 +108,7 @@ export type State = {
   memories: Memory[];
   providers: Provider[];
   integrations: Integration[];
+  githubOwnership: GithubOwnership[];
   mcpConnections: McpConnection[];
   projectProfiles: ProjectProfile[];
   planning: string[];
@@ -150,6 +151,15 @@ export type AttentionItem = {
   action_json: string;
   created_at: string;
 };
+export type GithubOwnership = {
+  id: string;
+  task_id: string;
+  repository: string;
+  number: number;
+  status: string;
+  detail: string;
+  last_checked_at: string | null;
+};
 export type Attachment = { name: string; content: string };
 export type TaskDetail = {
   task: Task;
@@ -177,6 +187,7 @@ export type TaskDetail = {
     checks_json: string;
   };
   receipt?: { id: string; content: string; created_at: string };
+  githubOwnership: GithubOwnership[];
 };
 export const activeStatuses = [
   "running",

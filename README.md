@@ -70,6 +70,8 @@ Provider credentials are never stored in SQLite or returned through application 
 
 Roster maintains a local registry for GitHub, Playwright, Sentry, Vercel, CodeRabbit, Linear, Supabase, Slack, and Notion. Each integration has a narrow capability catalog and an approval-aware risk class. The app detects local GitHub, Vercel, CodeRabbit, Supabase, and Playwright tooling. Services that need an account remain clearly marked as unavailable or sign-in required until connected.
 
+When GitHub CLI is authenticated, a completed Git-backed task can track its pull request. Roster records the pull request relationship locally, checks review, CI, conflict, and merge state, and puts only actionable changes in Needs You. Tracking is read-only and does not create, merge, or modify pull requests.
+
 MCP servers can be discovered from Settings. Discovery records the server's capabilities and protected-resource authorization metadata without sending credentials. Remote endpoints must use HTTPS; loopback HTTP is supported for local development. OAuth authorization and tool execution are intentionally not enabled by discovery alone.
 
 When a worker is attached to a project, it can inspect the local package scripts and project instruction files. You can explicitly save that inspection as a project profile, so later tasks in the same folder receive the relevant checks and instructions without relying on hidden context.

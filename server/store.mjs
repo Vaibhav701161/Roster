@@ -111,6 +111,12 @@ export async function openStore(directory) {
       ALTER TABLE mcp_connections ADD COLUMN tools_json TEXT NOT NULL DEFAULT '[]';
       INSERT INTO migration VALUES(11,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=12")) {
+    db.exec(`BEGIN;
+      CREATE TABLE github_ownership(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,repository TEXT NOT NULL,number INTEGER NOT NULL,status TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',snapshot_json TEXT NOT NULL DEFAULT '{}',last_checked_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(task_id,number));
+      CREATE INDEX github_ownership_task ON github_ownership(task_id,updated_at);
+      INSERT INTO migration VALUES(12,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

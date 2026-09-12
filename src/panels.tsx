@@ -760,7 +760,9 @@ export function TaskPanel({
     [criterion, setCriterion] = useState(""),
     [criterionType, setCriterionType] = useState("manual"),
     [recordingCriterion, setRecordingCriterion] = useState<string | null>(null),
-    [criterionEvidence, setCriterionEvidence] = useState("");
+    [criterionEvidence, setCriterionEvidence] = useState(""),
+    [pullRequest, setPullRequest] = useState(""),
+    [trackingPullRequest, setTrackingPullRequest] = useState(false);
   const task =
     detail?.task.id === id ? detail.task : state.tasks.find((t) => t.id === id);
   useEffect(() => {
@@ -845,6 +847,73 @@ export function TaskPanel({
               >
                 Prepare integration patch
               </button>
+            )}
+            {task.repository && (
+              <section
+                className="task-github-ownership"
+                aria-label="GitHub pull request ownership"
+              >
+                <h3>GitHub ownership</h3>
+                {detail?.githubOwnership.map((ownership) => (
+                  <div className="detail-pair" key={ownership.id}>
+                    <span>PR #{ownership.number}</span>
+                    <strong>{ownership.detail}</strong>
+                  </div>
+                ))}
+                {trackingPullRequest ? (
+                  <form
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      await act(() =>
+                        api(`/tasks/${id}/github-pull-request`, "POST", {
+                          number: Number(pullRequest),
+                        }),
+                      );
+                      setPullRequest("");
+                      setTrackingPullRequest(false);
+                      setDetail(await api<TaskDetail>(`/tasks/${id}`));
+                    }}
+                  >
+                    <label className="field">
+                      Pull request number
+                      <input
+                        type="number"
+                        min="1"
+                        max="100000000"
+                        required
+                        value={pullRequest}
+                        onChange={(event) => setPullRequest(event.target.value)}
+                        placeholder="482"
+                      />
+                    </label>
+                    <button className="primary">Track pull request</button>
+                  </form>
+                ) : (
+                  <button
+                    className="secondary"
+                    onClick={() => setTrackingPullRequest(true)}
+                  >
+                    Track pull request
+                  </button>
+                )}
+                {!!detail?.githubOwnership.length && (
+                  <button
+                    className="text-button"
+                    onClick={async () => {
+                      await act(() =>
+                        api(
+                          `/tasks/${id}/github-pull-request/refresh`,
+                          "POST",
+                          {},
+                        ),
+                      );
+                      setDetail(await api<TaskDetail>(`/tasks/${id}`));
+                    }}
+                  >
+                    Check GitHub now
+                  </button>
+                )}
+              </section>
             )}
             {verifying && (
               <form
