@@ -767,6 +767,49 @@ test("conversation mute persists as a local preference", async () => {
   }
 });
 
+test("needs you items resolve without deleting task history", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    const taskId = "00000000-0000-4000-8000-000000000199";
+    const attentionId = "00000000-0000-4000-8000-000000000200";
+    f.app.store.run(
+      "INSERT INTO tasks(id,conversation_id,owner_id,title,objective,status,kind,created_at) VALUES(?,?,?,?,?,?,?,?)",
+      [
+        taskId,
+        a.conversationId,
+        a.id,
+        "Task",
+        "Task",
+        "completed",
+        "work",
+        new Date().toISOString(),
+      ],
+    );
+    f.app.store.run(
+      "INSERT INTO attention_items(id,task_id,type,title,detail,created_at) VALUES(?,?,?,?,?,?)",
+      [
+        attentionId,
+        taskId,
+        "integration",
+        "Ready",
+        "Review patch",
+        new Date().toISOString(),
+      ],
+    );
+    await f.request(`/attention/${attentionId}/resolve`, "POST", {});
+    assert.equal(
+      f.app.store.one("SELECT status FROM attention_items WHERE id=?", [
+        attentionId,
+      ]).status,
+      "resolved",
+    );
+    assert.ok(f.app.store.one("SELECT id FROM tasks WHERE id=?", [taskId]));
+  } finally {
+    await f.app.close();
+  }
+});
+
 test("weekly digest uses only persisted verified outcome facts", async () => {
   const f = await fixture(async () => ({ text: "response" }));
   try {

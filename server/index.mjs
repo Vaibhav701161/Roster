@@ -619,6 +619,23 @@ export async function createServer({
     engine.resolveApproval(req.params.id, allow);
     res.json({ ok: true });
   });
+  app.post("/api/attention/:id/resolve", (req, res) => {
+    const item = must("attention_items", req.params.id);
+    if (item.status !== "open")
+      throw new Error("This item is already resolved.");
+    store.run(
+      "UPDATE attention_items SET status='resolved',resolved_at=? WHERE id=?",
+      [now(), item.id],
+    );
+    if (item.task_id)
+      engine.event(
+        item.task_id,
+        "attention.resolved",
+        "Marked resolved by you.",
+      );
+    changed();
+    res.json({ ok: true });
+  });
   app.post("/api/memories", (req, res) => {
     const b = z
       .object({

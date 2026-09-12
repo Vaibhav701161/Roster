@@ -341,22 +341,35 @@ export default function WorkspaceView(p: Props) {
               {state.needsYou.map((item) => {
                 const task = state.tasks.find((t) => t.id === item.task_id);
                 return (
-                  <button
-                    key={item.id}
-                    className="work-row"
-                    onClick={() => task && onTask(task.id)}
-                  >
-                    <span className="work-name">
-                      <strong>{item.title}</strong>
-                      <small>{item.detail}</small>
-                    </span>
-                    {task && (
-                      <span className={`status-pill ${task.status}`}>
-                        {statusLabel[task.status]}
+                  <div key={item.id}>
+                    <button
+                      className="work-row"
+                      onClick={() => task && onTask(task.id)}
+                    >
+                      <span className="work-name">
+                        <strong>{item.title}</strong>
+                        <small>{item.detail}</small>
                       </span>
+                      {task && (
+                        <span className={`status-pill ${task.status}`}>
+                          {statusLabel[task.status]}
+                        </span>
+                      )}
+                      <ChevronRight size={16} />
+                    </button>
+                    {item.type !== "approval" && (
+                      <button
+                        className="text-button"
+                        onClick={() =>
+                          act(() =>
+                            api(`/attention/${item.id}/resolve`, "POST", {}),
+                          )
+                        }
+                      >
+                        Mark resolved
+                      </button>
                     )}
-                    <ChevronRight size={16} />
-                  </button>
+                  </div>
                 );
               })}
             </div>
