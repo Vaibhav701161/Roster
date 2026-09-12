@@ -206,7 +206,7 @@ export async function createServer({
       .parse(req.body);
     const connection = await discoverMcp(url);
     store.run(
-      "INSERT INTO mcp_connections(id,url,server_name,status,detail,protocol_version,capabilities_json,auth_metadata_json,discovered_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET server_name=excluded.server_name,status=excluded.status,detail=excluded.detail,protocol_version=excluded.protocol_version,capabilities_json=excluded.capabilities_json,auth_metadata_json=excluded.auth_metadata_json,updated_at=excluded.updated_at",
+      "INSERT INTO mcp_connections(id,url,server_name,status,detail,protocol_version,capabilities_json,auth_metadata_json,tools_json,discovered_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET server_name=excluded.server_name,status=excluded.status,detail=excluded.detail,protocol_version=excluded.protocol_version,capabilities_json=excluded.capabilities_json,auth_metadata_json=excluded.auth_metadata_json,tools_json=excluded.tools_json,updated_at=excluded.updated_at",
       [
         connection.id,
         connection.url,
@@ -216,6 +216,7 @@ export async function createServer({
         connection.protocolVersion,
         JSON.stringify(connection.capabilities),
         JSON.stringify(connection.authMetadata),
+        JSON.stringify(connection.tools || []),
         now(),
         now(),
       ],

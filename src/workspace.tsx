@@ -758,6 +758,12 @@ function SettingsView({ state, act, notify }: Props) {
               <div>
                 <strong>{connection.server_name}</strong>
                 <small>{connection.detail}</small>
+                {JSON.parse(connection.tools_json || "[]").length ? (
+                  <small>
+                    {JSON.parse(connection.tools_json || "[]").length} tools in
+                    the local registry
+                  </small>
+                ) : null}
               </div>
               <span className="status-pill">
                 {statusLabel[connection.status] || connection.status}

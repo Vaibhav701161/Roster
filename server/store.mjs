@@ -106,6 +106,11 @@ export async function openStore(directory) {
       ALTER TABLE agents ADD COLUMN avatar_data TEXT NOT NULL DEFAULT '';
       INSERT INTO migration VALUES(10,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=11")) {
+    db.exec(`BEGIN;
+      ALTER TABLE mcp_connections ADD COLUMN tools_json TEXT NOT NULL DEFAULT '[]';
+      INSERT INTO migration VALUES(11,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

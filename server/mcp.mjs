@@ -64,6 +64,21 @@ function mcpRequest() {
   });
 }
 
+function rpc(method, params, id) {
+  return JSON.stringify({
+    jsonrpc: "2.0",
+    ...(id ? { id } : {}),
+    method,
+    ...(params === undefined ? {} : { params }),
+  });
+}
+
+const mcpHeaders = {
+  Accept: "application/json, text/event-stream",
+  "Content-Type": "application/json",
+  "MCP-Protocol-Version": protocolVersion,
+};
+
 async function request(url, options = {}) {
   const response = await fetch(url, {
     redirect: "manual",
@@ -118,15 +133,33 @@ async function protectedMetadata(endpoint, challenge) {
   return null;
 }
 
+async function discoverTools(url) {
+  await request(url, {
+    method: "POST",
+    headers: mcpHeaders,
+    body: rpc("notifications/initialized"),
+  });
+  const response = await request(url, {
+    method: "POST",
+    headers: mcpHeaders,
+    body: rpc("tools/list", {}, "roster-tools"),
+  });
+  if (!response.ok) return [];
+  const payload = await json(response);
+  return Array.isArray(payload.result?.tools)
+    ? payload.result.tools.slice(0, 100).map((tool) => ({
+        name: String(tool.name || "Unnamed tool").slice(0, 200),
+        description: String(tool.description || "").slice(0, 2000),
+        inputSchema: tool.inputSchema || {},
+      }))
+    : [];
+}
+
 export async function discoverMcp(value) {
   const url = await canonicalMcpUrl(value);
   const response = await request(url, {
     method: "POST",
-    headers: {
-      Accept: "application/json, text/event-stream",
-      "Content-Type": "application/json",
-      "MCP-Protocol-Version": protocolVersion,
-    },
+    headers: mcpHeaders,
     body: mcpRequest(),
   });
   const connectionId = crypto
@@ -167,14 +200,25 @@ export async function discoverMcp(value) {
       body.error.message || "MCP server rejected initialization.",
     );
   const result = body.result || {};
+  let tools = [];
+  let toolDetail = "";
+  if (result.capabilities?.tools) {
+    try {
+      tools = await discoverTools(url);
+    } catch {
+      toolDetail =
+        " The server accepted initialization, but its tool registry was unavailable.";
+    }
+  }
   return {
     id: connectionId,
     url,
     status: "available",
-    detail: "The server accepted an unauthenticated initialization request.",
+    detail: `The server accepted an unauthenticated initialization request.${tools.length ? ` ${tools.length} tool${tools.length === 1 ? "" : "s"} discovered.` : toolDetail}`,
     serverName: result.serverInfo?.name || new URL(url).hostname,
     protocolVersion: result.protocolVersion || protocolVersion,
     capabilities: Object.keys(result.capabilities || {}),
+    tools,
     authMetadata: {},
   };
 }

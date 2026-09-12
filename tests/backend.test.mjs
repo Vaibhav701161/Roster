@@ -775,37 +775,67 @@ test("integration refresh persists scoped engineering tool status without creden
 
 test("MCP discovery records public capabilities and authorization metadata without tokens", async () => {
   const server = http.createServer((req, res) => {
-    const origin = `http://${req.headers.host}`;
-    if (req.url === "/secure") {
-      res.writeHead(401, {
-        "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/secure"`,
-      });
-      return res.end();
-    }
-    if (req.url === "/.well-known/oauth-protected-resource/secure") {
-      res.setHeader("Content-Type", "application/json");
-      return res.end(
-        JSON.stringify({
-          authorization_servers: ["https://login.example.com"],
-          scopes_supported: ["issues:read"],
-        }),
-      );
-    }
-    if (req.url === "/public") {
-      res.setHeader("Content-Type", "application/json");
-      return res.end(
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: "roster-discovery",
-          result: {
-            protocolVersion: "2025-11-25",
-            serverInfo: { name: "Local MCP" },
-            capabilities: { tools: {} },
-          },
-        }),
-      );
-    }
-    res.writeHead(404).end();
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const origin = `http://${req.headers.host}`;
+      const request = chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
+      if (req.url === "/secure") {
+        res.writeHead(401, {
+          "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/secure"`,
+        });
+        return res.end();
+      }
+      if (req.url === "/.well-known/oauth-protected-resource/secure") {
+        res.setHeader("Content-Type", "application/json");
+        return res.end(
+          JSON.stringify({
+            authorization_servers: ["https://login.example.com"],
+            scopes_supported: ["issues:read"],
+          }),
+        );
+      }
+      if (req.url === "/public" && request.method === "initialize") {
+        res.setHeader("Content-Type", "application/json");
+        return res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: "roster-discovery",
+            result: {
+              protocolVersion: "2025-11-25",
+              serverInfo: { name: "Local MCP" },
+              capabilities: { tools: {} },
+            },
+          }),
+        );
+      }
+      if (
+        req.url === "/public" &&
+        request.method === "notifications/initialized"
+      ) {
+        res.writeHead(202);
+        return res.end();
+      }
+      if (req.url === "/public" && request.method === "tools/list") {
+        res.setHeader("Content-Type", "application/json");
+        return res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: "roster-tools",
+            result: {
+              tools: [
+                {
+                  name: "issues.read",
+                  description: "Read issue context",
+                  inputSchema: { type: "object" },
+                },
+              ],
+            },
+          }),
+        );
+      }
+      res.writeHead(404).end();
+    });
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;
@@ -821,8 +851,17 @@ test("MCP discovery records public capabilities and authorization metadata witho
     });
     assert.equal(publicServer.serverName, "Local MCP");
     assert.deepEqual(publicServer.capabilities, ["tools"]);
+    assert.equal(publicServer.tools[0].name, "issues.read");
     const state = await f.request("/state");
     assert.equal(state.mcpConnections.length, 2);
+    assert.equal(
+      JSON.parse(
+        state.mcpConnections.find(
+          (connection) => connection.server_name === "Local MCP",
+        ).tools_json,
+      )[0].name,
+      "issues.read",
+    );
   } finally {
     await f.app.close();
     await new Promise((resolve) => server.close(resolve));

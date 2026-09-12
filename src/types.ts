@@ -131,6 +131,7 @@ export type McpConnection = {
   detail: string;
   protocol_version: string;
   capabilities_json: string;
+  tools_json: string;
   updated_at: string;
 };
 export type ProjectProfile = {
