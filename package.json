@@ -3,6 +3,7 @@
   "version": "0.1.0-alpha.1",
   "description": "A local-first desktop messenger for persistent AI workers.",
   "author": "Roster contributors",
+  "desktopName": "roster",
   "private": false,
   "license": "MIT",
   "homepage": "https://github.com/Vaibhav701161/Roster#readme",
@@ -87,7 +88,8 @@
         "AppImage",
         "deb"
       ],
-      "category": "Development"
+      "category": "Development",
+      "syncDesktopName": true
     },
     "mac": {
       "target": [
