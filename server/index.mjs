@@ -478,6 +478,21 @@ export async function createServer({
       });
     }
   });
+  app.get("/api/tasks/:id/receipt", (req, res) => {
+    const task = must("tasks", req.params.id);
+    const receipt = store.one("SELECT * FROM work_receipts WHERE task_id=?", [
+      task.id,
+    ]);
+    if (!receipt)
+      throw new Error("This task does not have a verified work receipt yet.");
+    const filename = `${task.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").slice(0, 70) || "Roster receipt"}.md`;
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
+    res.send(receipt.content);
+  });
   app.post("/api/tasks/:id/cancel", (req, res) => {
     engine.cancel(req.params.id);
     res.json({ ok: true });

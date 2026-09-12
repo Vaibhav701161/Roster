@@ -837,6 +837,43 @@ test("weekly digest uses only persisted verified outcome facts", async () => {
   }
 });
 
+test("verified work receipts download as Markdown", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    const taskId = "00000000-0000-4000-8000-000000000299";
+    f.app.store.run(
+      "INSERT INTO tasks(id,conversation_id,owner_id,title,objective,status,kind,verification,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+      [
+        taskId,
+        a.conversationId,
+        a.id,
+        "Receipt task",
+        "Task",
+        "completed",
+        "work",
+        "verified",
+        new Date().toISOString(),
+      ],
+    );
+    f.app.store.run(
+      "INSERT INTO work_receipts(id,task_id,content,created_at) VALUES(?,?,?,?)",
+      [
+        "00000000-0000-4000-8000-000000000300",
+        taskId,
+        "# Receipt task\n\nVerified.",
+        new Date().toISOString(),
+      ],
+    );
+    const response = await fetch(`${f.app.url}/api/tasks/${taskId}/receipt`);
+    assert.equal(response.status, 200);
+    assert.match(await response.text(), /Verified/);
+    assert.match(response.headers.get("content-disposition"), /Receipt%20task/);
+  } finally {
+    await f.app.close();
+  }
+});
+
 test("users can add an explicit outcome acceptance criterion", async () => {
   const f = await fixture(async () => ({ text: "response" }));
   try {

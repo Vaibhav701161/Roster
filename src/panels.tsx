@@ -914,6 +914,13 @@ export function TaskPanel({
             <section className="drawer-section">
               <h3>Work receipt</h3>
               <pre className="work-diff">{detail.receipt.content}</pre>
+              <a
+                className="secondary"
+                href={`/api/tasks/${id}/receipt`}
+                download
+              >
+                Download receipt
+              </a>
             </section>
           )}
           {detail?.dependencies.length ? (
