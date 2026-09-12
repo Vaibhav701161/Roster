@@ -585,6 +585,10 @@ export function createEngine(
         "SELECT * FROM outcome_contracts WHERE task_id=?",
         [task.id],
       );
+      const acceptanceCriteria = store.all(
+        "SELECT c.type,c.description,c.command,c.status FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id IN (?,?) ORDER BY c.created_at",
+        [task.id, task.root_task_id || task.id],
+      );
       if (outcome)
         store.run(
           "UPDATE outcome_contracts SET status='working',updated_at=? WHERE id=?",
@@ -655,12 +659,15 @@ export function createEngine(
         {
           prompt: workerPrompt(
             agent,
-            instructions.length
-              ? {
-                  ...task,
-                  objective: `${task.objective}\n\nLatest user instructions:\n${instructions.map((item) => `- ${item.content}`).join("\n")}`,
-                }
-              : effectiveTask,
+            {
+              ...(instructions.length
+                ? {
+                    ...task,
+                    objective: `${task.objective}\n\nLatest user instructions:\n${instructions.map((item) => `- ${item.content}`).join("\n")}`,
+                  }
+                : effectiveTask),
+              acceptanceCriteria,
+            },
             history,
             memory,
             deps,

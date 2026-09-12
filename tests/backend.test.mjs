@@ -881,6 +881,8 @@ test("an explicitly saved project profile supplies bounded instructions to later
     );
     assert.match(prompt, /Project profile: profiled-app/);
     assert.match(prompt, /Run the focused test/);
+    assert.match(prompt, /Definition of done/);
+    assert.match(prompt, /The requested outcome is addressed/);
   } finally {
     await f.app.close();
   }
