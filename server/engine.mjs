@@ -595,7 +595,20 @@ export function createEngine(
         if (reviewedWorkspace?.worktree_path)
           workspace = reviewedWorkspace.worktree_path;
       }
-      if (task.kind === "work" && isGitWorkspace(task.workspace)) {
+      if (
+        task.kind === "work" &&
+        task.worktree_path &&
+        isGitWorkspace(task.worktree_path)
+      ) {
+        workspace = task.worktree_path;
+        const activeTask = active.get(task.id);
+        if (activeTask) activeTask.workspace = workspace;
+        event(
+          task.id,
+          "worktree.reused",
+          "Continuing in the task's existing isolated branch.",
+        );
+      } else if (task.kind === "work" && isGitWorkspace(task.workspace)) {
         const isolated = await provisionWorktree(task);
         if (isolated) {
           workspace = isolated.worktreePath;
@@ -1163,6 +1176,96 @@ export function createEngine(
     event(taskId, "task.replanned", "Recovery attempt requested by you.");
     schedule();
   }
+  function repairGithub(taskId, finding) {
+    const parent = store.one("SELECT * FROM tasks WHERE id=?", [taskId]);
+    if (!parent || parent.kind !== "work" || !parent.worktree_path)
+      throw new Error(
+        "This GitHub finding is not attached to a repairable coding task.",
+      );
+    const rootId = parent.root_task_id || parent.id;
+    const repairId = id();
+    const reviewer = store.one(
+      "SELECT reviewer.owner_id FROM tasks reviewer JOIN task_dependencies dependency ON dependency.task_id=reviewer.id WHERE dependency.depends_on=? AND reviewer.kind='review' ORDER BY reviewer.created_at DESC LIMIT 1",
+      [parent.id],
+    );
+    const reverifyId = reviewer ? id() : null;
+    store.transaction(() => {
+      store.run(
+        "INSERT INTO tasks(id,conversation_id,message_id,owner_id,title,objective,status,kind,workspace,created_at,intent_json,requirements_json,root_task_id,repository,base_commit,branch,worktree_path) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+          repairId,
+          parent.conversation_id,
+          parent.message_id,
+          parent.owner_id,
+          `Repair GitHub finding: ${parent.title}`.slice(0, 100),
+          `Repair the GitHub pull request finding for: ${parent.objective}\n\nFinding: ${finding}\n\nWork in the existing task branch. Preserve the requested scope and report observable verification.`,
+          "queued",
+          "work",
+          parent.workspace,
+          now(),
+          parent.intent_json || "{}",
+          parent.requirements_json || "{}",
+          rootId,
+          parent.repository,
+          parent.base_commit,
+          parent.branch,
+          parent.worktree_path,
+        ],
+      );
+      if (reverifyId) {
+        store.run(
+          "INSERT INTO tasks(id,conversation_id,message_id,owner_id,title,objective,status,kind,workspace,created_at,intent_json,requirements_json,root_task_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+          [
+            reverifyId,
+            parent.conversation_id,
+            parent.message_id,
+            reviewer.owner_id,
+            `Reverify GitHub repair: ${parent.title}`.slice(0, 100),
+            "Independently reverify the GitHub pull request repair and return the required structured verdict.",
+            "waiting_dependency",
+            "review",
+            parent.workspace,
+            now(),
+            "{}",
+            JSON.stringify(
+              taskRequirements({ kind: "review", workspace: parent.workspace }),
+            ),
+            rootId,
+          ],
+        );
+        store.run("INSERT INTO task_dependencies VALUES(?,?)", [
+          reverifyId,
+          repairId,
+        ]);
+      }
+      store.run("UPDATE tasks SET verification='needs_repair' WHERE id=?", [
+        rootId,
+      ]);
+      const outcome = store.one(
+        "SELECT id FROM outcome_contracts WHERE task_id=?",
+        [rootId],
+      );
+      if (outcome)
+        store.run(
+          "UPDATE outcome_contracts SET status='working',updated_at=? WHERE id=?",
+          [now(), outcome.id],
+        );
+    });
+    event(
+      repairId,
+      "github.repair_queued",
+      "Queued from a GitHub ownership finding.",
+    );
+    if (reverifyId)
+      event(
+        reverifyId,
+        "github.reverify_queued",
+        "A previous reviewer will independently reverify the repair.",
+      );
+    schedule();
+    emit();
+    return { repairId, reverifyId };
+  }
   function steer(conversationId, messageId, content) {
     const task = store.one(
       "SELECT * FROM tasks WHERE conversation_id=? AND status IN ('running','waiting_approval','queued','waiting_dependency') ORDER BY CASE status WHEN 'running' THEN 0 WHEN 'waiting_approval' THEN 1 ELSE 2 END,created_at LIMIT 1",
@@ -1267,6 +1370,7 @@ export function createEngine(
     route,
     cancel,
     retry,
+    repairGithub,
     steer,
     resolveApproval,
     event,

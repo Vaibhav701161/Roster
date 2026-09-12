@@ -144,28 +144,7 @@ async function defaultBaseBranch(worktree) {
 }
 
 export async function createGithubPullRequest(task, { title, body }) {
-  if (!task.worktree_path || !task.branch)
-    throw new Error(
-      "This task does not have an isolated Git branch to publish.",
-    );
-  const worktree = task.worktree_path;
-  const { stdout: remote } = await git(
-    ["config", "--get", "remote.origin.url"],
-    worktree,
-  );
-  const repository = githubRepository(remote);
-  if (!repository)
-    throw new Error(
-      "This task's project does not have a GitHub origin remote.",
-    );
-  await git(["diff", "--check"], worktree);
-  const { stdout: changed } = await git(["status", "--porcelain"], worktree);
-  if (changed.trim()) {
-    await git(["add", "--all"], worktree);
-    await git(["commit", "-m", `Roster: ${title}`.slice(0, 240)], worktree);
-  }
-  const base = await defaultBaseBranch(worktree);
-  await git(["push", "--set-upstream", "origin", task.branch], worktree);
+  const { repository, base } = await publishGithubTaskBranch(task, { title });
   try {
     const { stdout } = await exec(
       "gh",
@@ -198,6 +177,32 @@ export async function createGithubPullRequest(task, { title, body }) {
       `GitHub could not open the pull request: ${detail.slice(0, 500)}`,
     );
   }
+}
+
+export async function publishGithubTaskBranch(task, { title }) {
+  if (!task.worktree_path || !task.branch)
+    throw new Error(
+      "This task does not have an isolated Git branch to publish.",
+    );
+  const worktree = task.worktree_path;
+  const { stdout: remote } = await git(
+    ["config", "--get", "remote.origin.url"],
+    worktree,
+  );
+  const repository = githubRepository(remote);
+  if (!repository)
+    throw new Error(
+      "This task's project does not have a GitHub origin remote.",
+    );
+  await git(["diff", "--check"], worktree);
+  const { stdout: changed } = await git(["status", "--porcelain"], worktree);
+  if (changed.trim()) {
+    await git(["add", "--all"], worktree);
+    await git(["commit", "-m", `Roster: ${title}`.slice(0, 240)], worktree);
+  }
+  const base = await defaultBaseBranch(worktree);
+  await git(["push", "--set-upstream", "origin", task.branch], worktree);
+  return { repository, base, branch: task.branch };
 }
 
 export function createGithubOwnership(store, event, client = {}) {

@@ -20,6 +20,7 @@ This document tracks the product work from the current engineering and messenger
 - [x] Execute discovered remote HTTP and local stdio MCP tools through explicit user actions with bounded payloads and local audit records.
 - [x] Track connected GitHub pull requests through review, CI, conflict, and merge state with Needs You escalation.
 - [x] Publish an explicitly approved task branch as a GitHub pull request without force operations or automatic merges.
+- [x] Queue GitHub-driven owner repair and independent re-review in the existing isolated task branch.
 - [ ] Build the engineering integrations in priority order: GitHub, Sentry, Vercel, Playwright, CodeRabbit, Linear, Supabase/Postgres, Slack, and Notion.
 - [ ] Add continuous ownership, proactive monitoring, and fact-based weekly receipts.
 

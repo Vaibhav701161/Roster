@@ -882,6 +882,32 @@ export function TaskPanel({
                     Publish branch and open pull request
                   </button>
                 )}
+                {!!detail?.githubOwnership.length &&
+                  task.status === "completed" && (
+                    <button
+                      className="secondary"
+                      onClick={async () => {
+                        if (
+                          !window.confirm(
+                            "Roster will commit the current task worktree if needed and push its existing task branch. Continue?",
+                          )
+                        )
+                          return;
+                        await act(() =>
+                          api(
+                            `/tasks/${id}/github-pull-request/publish`,
+                            "POST",
+                            {
+                              title: task.title,
+                            },
+                          ),
+                        );
+                        setDetail(await api<TaskDetail>(`/tasks/${id}`));
+                      }}
+                    >
+                      Publish candidate update
+                    </button>
+                  )}
                 {trackingPullRequest ? (
                   <form
                     onSubmit={async (event) => {

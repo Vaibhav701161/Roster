@@ -20,7 +20,11 @@ import {
   discoverLocalMcp,
   discoverMcp,
 } from "./mcp.mjs";
-import { createGithubOwnership, createGithubPullRequest } from "./github.mjs";
+import {
+  createGithubOwnership,
+  createGithubPullRequest,
+  publishGithubTaskBranch,
+} from "./github.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
 const short = z.string().trim().min(1).max(100);
@@ -250,6 +254,34 @@ export async function createServer({
     );
     changed();
     res.json({ pullRequest, ownership });
+  });
+  app.post("/api/tasks/:id/github-pull-request/publish", async (req, res) => {
+    const task = must("tasks", req.params.id);
+    if (task.status !== "completed")
+      throw new Error("Complete the task before publishing its branch update.");
+    const rootId = task.root_task_id || task.id;
+    const root = must("tasks", rootId);
+    const monitor = store.one(
+      "SELECT * FROM github_ownership WHERE task_id=? ORDER BY updated_at DESC LIMIT 1",
+      [root.id],
+    );
+    if (!monitor)
+      throw new Error(
+        "Track a pull request before publishing additional task changes.",
+      );
+    const title = z
+      .object({ title: z.string().trim().min(3).max(240).default(task.title) })
+      .parse(req.body).title;
+    const publish = githubClient?.publishTaskBranch || publishGithubTaskBranch;
+    const branch = await publish(task, { title });
+    const ownership = await githubOwnership.track(root, monitor.number);
+    engine.event(
+      task.id,
+      "github.branch_published",
+      `Published ${branch.branch} to update pull request #${monitor.number}.`,
+    );
+    changed();
+    res.json({ branch, ownership });
   });
   app.post("/api/mcp/discover", async (req, res) => {
     const { url } = z
@@ -855,6 +887,21 @@ export async function createServer({
       );
     changed();
     res.json({ ok: true });
+  });
+  app.post("/api/attention/:id/repair", (req, res) => {
+    const item = must("attention_items", req.params.id);
+    if (
+      item.status !== "open" ||
+      !item.type.match(/^github_(ci|review|conflict|closed)$/)
+    )
+      throw new Error("This item does not have an automatic repair path.");
+    const repair = engine.repairGithub(item.task_id, item.detail);
+    store.run(
+      "UPDATE attention_items SET status='resolved',resolved_at=? WHERE id=?",
+      [now(), item.id],
+    );
+    changed();
+    res.json(repair);
   });
   app.post("/api/memories", (req, res) => {
     const b = z

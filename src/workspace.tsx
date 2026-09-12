@@ -363,16 +363,32 @@ export default function WorkspaceView(p: Props) {
                       <ChevronRight size={16} />
                     </button>
                     {item.type !== "approval" && (
-                      <button
-                        className="text-button"
-                        onClick={() =>
-                          act(() =>
-                            api(`/attention/${item.id}/resolve`, "POST", {}),
-                          )
-                        }
-                      >
-                        Mark resolved
-                      </button>
+                      <>
+                        {/^github_(ci|review|conflict|closed)$/.test(
+                          item.type,
+                        ) && (
+                          <button
+                            className="secondary"
+                            onClick={() =>
+                              act(() =>
+                                api(`/attention/${item.id}/repair`, "POST", {}),
+                              )
+                            }
+                          >
+                            Let owner repair
+                          </button>
+                        )}
+                        <button
+                          className="text-button"
+                          onClick={() =>
+                            act(() =>
+                              api(`/attention/${item.id}/resolve`, "POST", {}),
+                            )
+                          }
+                        >
+                          Mark resolved
+                        </button>
+                      </>
                     )}
                   </div>
                 );

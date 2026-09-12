@@ -843,12 +843,26 @@ test("GitHub pull request ownership persists actionable CI and review state", as
     );
     assert.equal(monitored.status, "needs_attention");
     assert.match(monitored.detail, /Review changes/);
+    const attention = f.app.store.one(
+      "SELECT * FROM attention_items WHERE task_id=? AND status='open'",
+      [task.id],
+    );
+    assert.equal(attention.type, "github_review");
+    const repair = await f.request(
+      `/attention/${attention.id}/repair`,
+      "POST",
+      {},
+    );
+    const repairTask = await until(() =>
+      f.app.store.one("SELECT * FROM tasks WHERE id=? AND status='completed'", [
+        repair.repairId,
+      ]),
+    );
+    assert.equal(repairTask.worktree_path, task.worktree_path);
     assert.equal(
-      f.app.store.one(
-        "SELECT type FROM attention_items WHERE task_id=? AND status='open'",
-        [task.id],
-      ).type,
-      "github_review",
+      f.app.store.one("SELECT verification FROM tasks WHERE id=?", [task.id])
+        .verification,
+      "needs_repair",
     );
     pullRequest = { ...pullRequest, state: "MERGED", reviewDecision: "" };
     await f.request(
