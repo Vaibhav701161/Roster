@@ -563,6 +563,17 @@ export async function createServer({
       ),
     ),
   );
+  app.get("/api/digest/weekly", (req, res) => {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const outcomes = store.all(
+      `SELECT t.id,t.title,t.completed_at,r.content receipt,
+        (SELECT COUNT(*) FROM evidence e WHERE e.task_id=t.id AND e.status='pass') evidence_count
+       FROM tasks t LEFT JOIN work_receipts r ON r.task_id=t.id
+       WHERE t.verification='verified' AND t.completed_at>=? ORDER BY t.completed_at DESC`,
+      [since],
+    );
+    res.json({ since, outcomes, verifiedCount: outcomes.length });
+  });
   app.get("/api/search", (req, res) => {
     const q = z
       .string()

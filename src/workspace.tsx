@@ -491,40 +491,64 @@ function ActivityView({ state }: { state: State }) {
         created_at: string;
       }[]
     >([]),
+    [digest, setDigest] = useState<{
+      verifiedCount: number;
+      outcomes: { id: string; title: string; evidence_count: number }[];
+    } | null>(null),
     [error, setError] = useState("");
   useEffect(() => {
     api<typeof events>("/activity")
       .then(setEvents)
       .catch((e) => setError(e.message));
+    api<typeof digest>("/digest/weekly")
+      .then(setDigest)
+      .catch(() => {});
   }, [state.tasks]);
   return error ? (
     <p className="form-error">{error}</p>
-  ) : !events.length ? (
+  ) : !events.length && !digest?.verifiedCount ? (
     <Empty
       icon={Activity}
       title="The story behind the work."
       text="Significant actions and outcomes appear here as your workers get things done."
     />
   ) : (
-    <div className="activity-list">
-      {events.map((e) => (
-        <div key={e.id} className="activity-row">
-          <span className="task-state-icon">
-            <Activity size={17} />
-          </span>
-          <div>
-            <strong>{e.title || "Workspace activity"}</strong>
-            <p>{eventText(e.detail)}</p>
+    <>
+      {digest?.verifiedCount ? (
+        <section className="settings-section">
+          <h2>This week</h2>
+          <p>
+            {digest.verifiedCount} verified outcome
+            {digest.verifiedCount === 1 ? "" : "s"} with persisted evidence.
+          </p>
+          {digest.outcomes.map((outcome) => (
+            <div className="detail-pair" key={outcome.id}>
+              <span>{outcome.evidence_count} checks</span>
+              <strong>{outcome.title}</strong>
+            </div>
+          ))}
+        </section>
+      ) : null}
+      <div className="activity-list">
+        {events.map((e) => (
+          <div key={e.id} className="activity-row">
+            <span className="task-state-icon">
+              <Activity size={17} />
+            </span>
+            <div>
+              <strong>{e.title || "Workspace activity"}</strong>
+              <p>{eventText(e.detail)}</p>
+            </div>
+            <time>
+              {new Date(e.created_at).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </time>
           </div>
-          <time>
-            {new Date(e.created_at).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </time>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
   );
 }
 function SettingsView({ state, act, notify }: Props) {

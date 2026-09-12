@@ -732,6 +732,33 @@ test("message reactions are local, durable, and toggleable", async () => {
   }
 });
 
+test("weekly digest uses only persisted verified outcome facts", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    f.app.store.run(
+      "INSERT INTO tasks(id,conversation_id,owner_id,title,objective,status,kind,verification,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      [
+        "00000000-0000-4000-8000-000000000099",
+        a.conversationId,
+        a.id,
+        "Verified task",
+        "Finish it",
+        "completed",
+        "work",
+        "verified",
+        new Date().toISOString(),
+        new Date().toISOString(),
+      ],
+    );
+    const digest = await f.request("/digest/weekly");
+    assert.equal(digest.verifiedCount, 1);
+    assert.equal(digest.outcomes[0].title, "Verified task");
+  } finally {
+    await f.app.close();
+  }
+});
+
 test(
   "Windows secret persistence uses DPAPI and does not store the cleartext key",
   { skip: process.platform !== "win32" },
