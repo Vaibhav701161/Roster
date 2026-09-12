@@ -10,8 +10,20 @@ import {
   runCompatible,
   cleanError,
 } from "./runtime.mjs";
-import { routerSchema, routerPrompt, workerPrompt } from "./prompts.mjs";
+import {
+  routerSchema,
+  routerPrompt,
+  reviewSchema,
+  workerPrompt,
+} from "./prompts.mjs";
 import { buildContext } from "./context.mjs";
+import {
+  missingCapabilities,
+  providerPolicy,
+  supports,
+  taskRequirements,
+} from "./capabilities.mjs";
+import { isGitWorkspace, provisionWorktree } from "./worktree.mjs";
 const assignment = z.object({
   agent_id: z.string(),
   objective: z.string().min(1).max(8000),
@@ -37,6 +49,67 @@ export function validatePlan(value, members) {
   return plan;
 }
 const terminal = ["completed", "failed", "cancelled", "interrupted"];
+const reviewVerdict = z.object({
+  verdict: z.enum(["pass", "concerns", "fail", "unable_to_verify"]),
+  summary: z.string().min(1).max(8000),
+  issues: z
+    .array(
+      z.object({
+        id: z.string(),
+        severity: z.enum(["critical", "high", "medium", "low"]),
+        category: z.enum([
+          "correctness",
+          "security",
+          "regression",
+          "maintainability",
+          "testing",
+        ]),
+        file: z.string(),
+        line: z.string(),
+        description: z.string(),
+        evidence: z.string(),
+      }),
+    )
+    .max(100),
+  checks: z
+    .array(
+      z.object({
+        name: z.string(),
+        status: z.enum(["pass", "fail", "unavailable"]),
+        evidence: z.string(),
+      }),
+    )
+    .max(100),
+});
+function structuredIntent(text, hasWorkspace) {
+  const normalized = text.trim();
+  const constraints = [
+    ...normalized.matchAll(
+      /(?:don't|do not|without|avoid)\s+([^.!?\n]{3,160})/gi,
+    ),
+  ].map((m) => m[0]);
+  const action =
+    /^(?:please\s+)?(?:fix|debug|implement|build|refactor|investigate|review|verify|run|prepare)\b/i.test(
+      normalized,
+    ) ||
+    /\b(?:please (?:fix|implement|review)|can you (?:fix|implement|review)|I need (?:a |you to )?(?:fix|implementation|review))\b/i.test(
+      normalized,
+    );
+  const question =
+    /^(?:what|why|how|when|where|who|can you explain|could you explain)\b/i.test(
+      normalized,
+    ) || /\?$/.test(normalized);
+  const mode = action ? "work" : question ? "conversation" : "conversation";
+  return {
+    mode,
+    confidence: action || question ? 0.94 : 0.55,
+    requires_execution: action,
+    requires_workspace: action && hasWorkspace,
+    objective: normalized,
+    constraints,
+    classifier: "deterministic-v1",
+  };
+}
 export function overlappingWorkspaces(a, b) {
   if (!a || !b) return false;
   const normalize = (p) => (process.platform === "win32" ? p.toLowerCase() : p);
@@ -119,6 +192,36 @@ export function createEngine(
     emit();
     return mid;
   };
+  const createOutcome = (taskId, objective, constraints) => {
+    const outcomeId = id();
+    store.run(
+      "INSERT INTO outcome_contracts(id,task_id,goal,constraints_json,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+      [
+        outcomeId,
+        taskId,
+        objective,
+        JSON.stringify(constraints),
+        "planning",
+        now(),
+        now(),
+      ],
+    );
+    for (const criterion of [
+      { type: "manual", description: "The requested outcome is addressed." },
+      { type: "review", description: "An independent review passes." },
+    ])
+      store.run(
+        "INSERT INTO acceptance_criteria(id,outcome_id,type,description,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+        [id(), outcomeId, criterion.type, criterion.description, now(), now()],
+      );
+    return outcomeId;
+  };
+  const attention = (taskId, type, title, detail, action = {}) => {
+    store.run(
+      "INSERT INTO attention_items(id,task_id,type,title,detail,action_json,created_at) VALUES(?,?,?,?,?,?,?)",
+      [id(), taskId, type, title, detail, JSON.stringify(action), now()],
+    );
+  };
   async function detect() {
     const [codex, claude] = await Promise.all([detectCodex(), detectClaude()]);
     const claudeHealth =
@@ -145,18 +248,33 @@ export function createEngine(
     emit();
     return health;
   }
-  const chooseProvider = () => {
-    if (health.find((x) => x.id === "codex")?.status === "connected")
-      return "codex";
-    if (health.find((x) => x.id === "claude")?.status === "connected")
-      return "claude";
-    if (store.setting("compatible")) return "compatible";
+  const chooseProvider = (requirements = {}) => {
+    const candidates = [
+      health.find((x) => x.id === "codex")?.status === "connected" && "codex",
+      health.find((x) => x.id === "claude")?.status === "connected" && "claude",
+      !!store.setting("compatible") && "compatible",
+    ].filter(Boolean);
+    const provider = candidates.find((candidate) =>
+      supports(candidate, requirements),
+    );
+    if (provider) return provider;
+    if (candidates.length)
+      throw new Error(
+        `No connected runtime can safely handle this assignment. Missing capabilities: ${missingCapabilities(candidates[0], requirements).join(", ") || "unknown"}.`,
+      );
     throw new Error(
       "No AI runtime is connected. Your message is saved. Connect a runtime in Settings, then retry.",
     );
   };
-  const choose = (agent) =>
-    agent.provider !== "auto" ? agent.provider : chooseProvider();
+  const choose = (agent, requirements = {}) => {
+    const provider =
+      agent.provider !== "auto" ? agent.provider : chooseProvider(requirements);
+    if (!supports(provider, requirements))
+      throw new Error(
+        `${agent.name}'s selected runtime cannot safely handle this assignment. Missing capabilities: ${missingCapabilities(provider, requirements).join(", ")}.`,
+      );
+    return provider;
+  };
   async function invokeProvider(provider, options) {
     if (runner) return runner(options);
     if (provider === "codex") return runCodex(options);
@@ -165,9 +283,9 @@ export function createEngine(
     if (!config) throw new Error("Connect this worker’s runtime in Settings.");
     return runCompatible({ ...options, config, key: getKey() });
   }
-  async function invoke(agent, options) {
+  async function invoke(agent, options, requirements = {}) {
     if (runner) return runner(options);
-    return invokeProvider(choose(agent), options);
+    return invokeProvider(choose(agent, requirements), options);
   }
   async function route(conversation, text, mid) {
     const controller = new AbortController();
@@ -200,12 +318,12 @@ export function createEngine(
       let plan;
       if (!team || mentioned.length === 1) {
         const member = mentioned[0] || members[0];
+        const directIntent = structuredIntent(
+          text,
+          !!(team?.workspace || member.workspace),
+        );
         plan = {
-          type: /\b(build|fix|research|inspect|implement|create|write|review|verify|analy[sz]e|test|prepare|update|find)\b/i.test(
-            text,
-          )
-            ? "task"
-            : "chat",
+          type: directIntent.mode === "work" ? "task" : "chat",
           assignments: [
             {
               agent_id: member.id,
@@ -254,8 +372,30 @@ export function createEngine(
         plan.assignments.forEach((a, i) => {
           const worker = members.find((m) => m.id === a.agent_id);
           const workspace = team?.workspace || worker.workspace;
+          const intent =
+            plan.type === "task"
+              ? {
+                  ...structuredIntent(a.objective, !!workspace),
+                  mode: "work",
+                  requires_execution: true,
+                  requires_workspace: !!workspace,
+                  classifier: team ? "team-router-v1" : "deterministic-v1",
+                }
+              : {
+                  mode: "conversation",
+                  confidence: 1,
+                  requires_execution: false,
+                  requires_workspace: false,
+                  objective: a.objective,
+                  constraints: [],
+                  classifier: "router-v1",
+                };
+          const requirements = taskRequirements({
+            kind: plan.type === "chat" ? "chat" : a.kind,
+            workspace,
+          });
           store.run(
-            "INSERT INTO tasks(id,conversation_id,message_id,owner_id,title,objective,status,kind,workspace,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO tasks(id,conversation_id,message_id,owner_id,title,objective,status,kind,workspace,created_at,intent_json,requirements_json,root_task_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
             [
               ids[i],
               conversation.id,
@@ -267,8 +407,13 @@ export function createEngine(
               plan.type === "chat" ? "chat" : a.kind,
               workspace,
               now(),
+              JSON.stringify(intent),
+              JSON.stringify(requirements),
+              a.depends_on.length ? ids[a.depends_on[0]] : ids[i],
             ],
           );
+          if (plan.type === "task" && a.kind === "work")
+            createOutcome(ids[i], a.objective, intent.constraints);
           a.depends_on.forEach((d) =>
             store.run("INSERT INTO task_dependencies VALUES(?,?)", [
               ids[i],
@@ -331,11 +476,33 @@ export function createEngine(
         emit();
         continue;
       }
+      let requirements;
+      try {
+        requirements = JSON.parse(task.requirements_json || "{}");
+        if (!runner) choose(worker, requirements);
+      } catch (error) {
+        const detail = cleanError(error);
+        store.run(
+          "UPDATE tasks SET status='failed',error=?,completed_at=? WHERE id=?",
+          [detail, now(), task.id],
+        );
+        attention(
+          task.id,
+          "runtime",
+          "A worker needs a compatible runtime",
+          detail,
+        );
+        event(task.id, "task.capability_blocked", detail);
+        continue;
+      }
+      const isolated = task.kind === "work" && isGitWorkspace(task.workspace);
       if (
         [...active.values()].some(
           (r) =>
             r.owner === task.owner_id ||
-            overlappingWorkspaces(r.workspace, task.workspace),
+            (!isolated &&
+              !r.isolated &&
+              overlappingWorkspaces(r.workspace, task.workspace)),
         )
       )
         continue;
@@ -344,6 +511,7 @@ export function createEngine(
         controller,
         owner: task.owner_id,
         workspace: task.workspace,
+        isolated,
       });
       execute(task, worker, controller).catch((e) =>
         event(task.id, "runtime.error", cleanError(e)),
@@ -376,9 +544,51 @@ export function createEngine(
       broadcast("message.delta", { id: mid, content: response });
     };
     try {
-      const workspace =
+      let workspace =
         task.workspace || path.join(store.directory, "workspaces", agent.id);
+      if (task.kind === "review") {
+        const reviewedWorkspace = store.one(
+          "SELECT t.worktree_path FROM tasks t JOIN task_dependencies d ON d.depends_on=t.id WHERE d.task_id=? ORDER BY t.completed_at DESC LIMIT 1",
+          [task.id],
+        );
+        if (reviewedWorkspace?.worktree_path)
+          workspace = reviewedWorkspace.worktree_path;
+      }
+      if (task.kind === "work" && isGitWorkspace(task.workspace)) {
+        const isolated = await provisionWorktree(task);
+        if (isolated) {
+          workspace = isolated.worktreePath;
+          store.run(
+            "UPDATE tasks SET repository=?,base_commit=?,branch=?,worktree_path=? WHERE id=?",
+            [
+              isolated.repository,
+              isolated.baseCommit,
+              isolated.branch,
+              isolated.worktreePath,
+              task.id,
+            ],
+          );
+          const activeTask = active.get(task.id);
+          if (activeTask) activeTask.workspace = workspace;
+          event(task.id, "worktree.created", {
+            branch: isolated.branch,
+            baseCommit: isolated.baseCommit,
+          });
+        }
+      }
       fs.mkdirSync(workspace, { recursive: true });
+      const effectiveTask = { ...task, workspace };
+      const requirements = JSON.parse(task.requirements_json || "{}");
+      const policy = providerPolicy(agent, task.kind);
+      const outcome = store.one(
+        "SELECT * FROM outcome_contracts WHERE task_id=?",
+        [task.id],
+      );
+      if (outcome)
+        store.run(
+          "UPDATE outcome_contracts SET status='working',updated_at=? WHERE id=?",
+          [now(), outcome.id],
+        );
       const history = await buildContext(
         store,
         task.conversation_id,
@@ -417,7 +627,7 @@ export function createEngine(
         `SELECT name,content FROM attachments WHERE message_id IN (${attachmentMessageIds.map(() => "?").join(",")})`,
         attachmentMessageIds,
       );
-      const provider = runner ? "test" : choose(agent);
+      const provider = runner ? "test" : choose(agent, requirements);
       const session =
         task.kind === "chat"
           ? store.one(
@@ -425,63 +635,73 @@ export function createEngine(
               [agent.id, task.conversation_id, provider, workspace],
             )
           : null;
-      const result = await invoke(agent, {
-        prompt: workerPrompt(
-          agent,
-          instructions.length
-            ? {
-                ...task,
-                objective: `${task.objective}\n\nLatest user instructions:\n${instructions.map((item) => `- ${item.content}`).join("\n")}`,
-              }
-            : task,
-          history,
-          memory,
-          deps,
-          attachments,
-          team,
-        ),
-        cwd: workspace,
-        threadId: session?.thread_id,
-        signal: controller.signal,
-        onSession: (threadId) =>
-          store.run(
-            "INSERT INTO runtime_sessions(id,agent_id,conversation_id,provider,thread_id,workspace,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(agent_id,conversation_id,provider,workspace) DO UPDATE SET thread_id=excluded.thread_id,updated_at=excluded.updated_at",
-            [
-              id(),
-              agent.id,
-              task.conversation_id,
-              provider,
-              threadId,
-              workspace,
-              now(),
-            ],
+      const result = await invoke(
+        agent,
+        {
+          prompt: workerPrompt(
+            agent,
+            instructions.length
+              ? {
+                  ...task,
+                  objective: `${task.objective}\n\nLatest user instructions:\n${instructions.map((item) => `- ${item.content}`).join("\n")}`,
+                }
+              : effectiveTask,
+            history,
+            memory,
+            deps,
+            attachments,
+            team,
           ),
-        onDelta: (delta) => {
-          response += delta;
-          if (!updateTimer) updateTimer = setTimeout(updateUI, 50);
-          if (Date.now() - lastFlush > 700) {
-            store.run("UPDATE messages SET content=? WHERE id=?", [
-              response,
-              mid,
-            ]);
-            lastFlush = Date.now();
-          }
-        },
-        onEvent: (e) => event(task.id, e.type, e),
-        onApproval: (request) =>
-          new Promise((resolve) => {
-            const aid = id();
+          cwd: workspace,
+          readOnly: policy.readOnly,
+          outputSchema: task.kind === "review" ? reviewSchema : undefined,
+          threadId: session?.thread_id,
+          signal: controller.signal,
+          onSession: (threadId) =>
             store.run(
-              "INSERT INTO approvals(id,task_id,title,detail,created_at) VALUES(?,?,?,?,?)",
-              [aid, task.id, request.title, request.detail, now()],
-            );
-            store.run("UPDATE tasks SET status='waiting_approval' WHERE id=?", [
-              task.id,
-            ]);
-            approvals.set(aid, { resolve, taskId: task.id });
-            event(task.id, "approval.requested", request.title);
-          }),
-      });
+              "INSERT INTO runtime_sessions(id,agent_id,conversation_id,provider,thread_id,workspace,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(agent_id,conversation_id,provider,workspace) DO UPDATE SET thread_id=excluded.thread_id,updated_at=excluded.updated_at",
+              [
+                id(),
+                agent.id,
+                task.conversation_id,
+                provider,
+                threadId,
+                workspace,
+                now(),
+              ],
+            ),
+          onDelta: (delta) => {
+            response += delta;
+            if (!updateTimer) updateTimer = setTimeout(updateUI, 50);
+            if (Date.now() - lastFlush > 700) {
+              store.run("UPDATE messages SET content=? WHERE id=?", [
+                response,
+                mid,
+              ]);
+              lastFlush = Date.now();
+            }
+          },
+          onEvent: (e) => event(task.id, e.type, e),
+          onApproval: (request) =>
+            new Promise((resolve) => {
+              const aid = id();
+              store.run(
+                "INSERT INTO approvals(id,task_id,title,detail,created_at) VALUES(?,?,?,?,?)",
+                [aid, task.id, request.title, request.detail, now()],
+              );
+              store.run(
+                "UPDATE tasks SET status='waiting_approval' WHERE id=?",
+                [task.id],
+              );
+              approvals.set(aid, { resolve, taskId: task.id });
+              attention(task.id, "approval", request.title, request.detail, {
+                approvalId: aid,
+              });
+              event(task.id, "approval.requested", request.title);
+            }),
+        },
+        requirements,
+      );
       if (controller.signal.aborted) throw new Error("Cancelled");
       response = result.text || response;
       if (!response)
@@ -492,21 +712,224 @@ export function createEngine(
         response,
         mid,
       ]);
+      let review = null;
+      if (task.kind === "review") {
+        try {
+          review = reviewVerdict.parse(JSON.parse(response));
+        } catch {
+          review = {
+            verdict: "unable_to_verify",
+            summary: "The reviewer did not return a valid structured verdict.",
+            issues: [],
+            checks: [],
+          };
+        }
+        store.run(
+          "INSERT INTO review_verdicts(id,task_id,verdict,summary,issues_json,checks_json,created_at) VALUES(?,?,?,?,?,?,?)",
+          [
+            id(),
+            task.id,
+            review.verdict,
+            review.summary,
+            JSON.stringify(review.issues),
+            JSON.stringify(review.checks),
+            now(),
+          ],
+        );
+        store.run(
+          "INSERT INTO evidence(id,task_id,type,source,status,summary,created_at) VALUES(?,?,?,?,?,?,?)",
+          [
+            id(),
+            task.id,
+            "review",
+            agent.name,
+            review.verdict === "pass"
+              ? "pass"
+              : review.verdict === "unable_to_verify"
+                ? "warning"
+                : "fail",
+            review.summary,
+            now(),
+          ],
+        );
+      }
       store.run(
         "UPDATE tasks SET status='completed',result=?,completed_at=?,verification=? WHERE id=?",
         [
           response,
           now(),
-          task.kind === "review" ? "reviewed" : "unverified",
+          review?.verdict === "pass"
+            ? "verified"
+            : task.kind === "review"
+              ? "unverified"
+              : "unverified",
           task.id,
         ],
       );
-      if (task.kind === "review")
-        for (const dep of deps)
-          store.run("UPDATE tasks SET verification='reviewed' WHERE id=?", [
+      if (review) {
+        for (const dep of deps) {
+          const parent = store.one("SELECT * FROM tasks WHERE id=?", [dep.id]);
+          const root = store.one("SELECT * FROM tasks WHERE id=?", [
+            parent.root_task_id || parent.id,
+          ]);
+          const outcome = store.one(
+            "SELECT * FROM outcome_contracts WHERE task_id IN (?,?)",
+            [dep.id, root.id],
+          );
+          if (review.verdict === "pass") {
+            store.run("UPDATE tasks SET verification='verified' WHERE id=?", [
+              dep.id,
+            ]);
+            if (root.id !== dep.id)
+              store.run("UPDATE tasks SET verification='verified' WHERE id=?", [
+                root.id,
+              ]);
+            if (outcome) {
+              store.run(
+                "UPDATE outcome_contracts SET status='satisfied',updated_at=? WHERE id=?",
+                [now(), outcome.id],
+              );
+              store.run(
+                "UPDATE acceptance_criteria SET status='pass',updated_at=? WHERE outcome_id=? AND type='review'",
+                [now(), outcome.id],
+              );
+            }
+            store.run(
+              "INSERT OR REPLACE INTO work_receipts(id,task_id,outcome_id,content,created_at) VALUES(?,?,?,?,?)",
+              [
+                id(),
+                root.id,
+                outcome?.id || null,
+                `# ${root.title}\n\nCompleted by ${parent.owner_id || "Roster worker"}.\n\nReviewed by ${agent.name}.\n\nVerification: independent review passed.\n\nEvidence: ${review.summary}`,
+                now(),
+              ],
+            );
+            continue;
+          }
+          const cycles = store.one(
+            "SELECT COUNT(*) count FROM review_verdicts v JOIN tasks t ON t.id=v.task_id WHERE t.root_task_id=?",
+            [parent.root_task_id || parent.id],
+          ).count;
+          store.run("UPDATE tasks SET verification=? WHERE id=?", [
+            review.verdict === "unable_to_verify"
+              ? "needs_you"
+              : "needs_repair",
             dep.id,
           ]);
+          if (
+            review.verdict === "unable_to_verify" ||
+            cycles >= store.setting("repairLimit", 3)
+          ) {
+            if (outcome)
+              store.run(
+                "UPDATE outcome_contracts SET status='needs_user',updated_at=? WHERE id=?",
+                [now(), outcome.id],
+              );
+            attention(
+              dep.id,
+              "verification",
+              review.verdict === "unable_to_verify"
+                ? "Verification needs a person"
+                : "Repair limit reached",
+              review.summary,
+              { reviewTaskId: task.id },
+            );
+            continue;
+          }
+          const repairId = id(),
+            reverifyId = id(),
+            rootId = parent.root_task_id || parent.id;
+          store.transaction(() => {
+            store.run(
+              "INSERT INTO tasks(id,conversation_id,message_id,owner_id,title,objective,status,kind,workspace,created_at,intent_json,requirements_json,root_task_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              [
+                repairId,
+                parent.conversation_id,
+                parent.message_id,
+                parent.owner_id,
+                `Repair: ${parent.title}`.slice(0, 100),
+                `Repair the review findings for: ${parent.objective}\n\n${review.summary}\n${review.issues.map((issue) => `- ${issue.severity}: ${issue.description} (${issue.file || "location unknown"})`).join("\n")}`,
+                "queued",
+                "work",
+                parent.workspace,
+                now(),
+                parent.intent_json || "{}",
+                parent.requirements_json || "{}",
+                rootId,
+              ],
+            );
+            store.run("INSERT INTO task_dependencies VALUES(?,?)", [
+              repairId,
+              task.id,
+            ]);
+            store.run(
+              "INSERT INTO tasks(id,conversation_id,message_id,owner_id,title,objective,status,kind,workspace,created_at,intent_json,requirements_json,root_task_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              [
+                reverifyId,
+                task.conversation_id,
+                task.message_id,
+                task.owner_id,
+                `Reverify: ${parent.title}`.slice(0, 100),
+                `Independently reverify the repair for: ${parent.objective}`,
+                "waiting_dependency",
+                "review",
+                parent.workspace,
+                now(),
+                "{}",
+                JSON.stringify(
+                  taskRequirements({
+                    kind: "review",
+                    workspace: parent.workspace,
+                  }),
+                ),
+                rootId,
+              ],
+            );
+            store.run("INSERT INTO task_dependencies VALUES(?,?)", [
+              reverifyId,
+              repairId,
+            ]);
+          });
+          event(
+            repairId,
+            "repair.queued",
+            "Reviewer findings were sent to the owner for a bounded repair.",
+          );
+          event(
+            reverifyId,
+            "reverify.queued",
+            "A fresh independent review will run after the repair.",
+          );
+        }
+      }
       if (task.kind !== "chat") {
+        if (task.kind === "work") {
+          const contract = store.one(
+            "SELECT id FROM outcome_contracts WHERE task_id=?",
+            [task.id],
+          );
+          if (contract) {
+            store.run(
+              "UPDATE outcome_contracts SET status='verifying',updated_at=? WHERE id=?",
+              [now(), contract.id],
+            );
+            store.run(
+              "INSERT INTO evidence(id,task_id,outcome_id,type,source,status,summary,created_at) VALUES(?,?,?,?,?,?,?,?)",
+              [
+                id(),
+                task.id,
+                contract.id,
+                "diff",
+                task.worktree_path || task.workspace || "local workspace",
+                "informational",
+                task.worktree_path
+                  ? "Task-scoped Git workspace prepared for inspection."
+                  : "Worker result recorded. No Git workspace was attached.",
+                now(),
+              ],
+            );
+          }
+        }
         const filename =
           task.title
             .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
@@ -576,6 +999,17 @@ export function createEngine(
         now(),
         task.id,
       ]);
+      const outcome = store.one(
+        "SELECT * FROM outcome_contracts WHERE task_id=?",
+        [task.id],
+      );
+      if (outcome && !cancelled) {
+        store.run(
+          "UPDATE outcome_contracts SET status='needs_user',updated_at=? WHERE id=?",
+          [now(), outcome.id],
+        );
+        attention(task.id, "task_failure", "Work needs your input", error);
+      }
       event(task.id, cancelled ? "task.cancelled" : "task.failed", error);
     } finally {
       clearTimeout(updateTimer);
@@ -607,6 +1041,10 @@ export function createEngine(
     store.run("UPDATE tasks SET status='running' WHERE id=?", [
       approval.taskId,
     ]);
+    store.run(
+      "UPDATE attention_items SET status='resolved',resolved_at=? WHERE type='approval' AND task_id=? AND status='open'",
+      [now(), approval.taskId],
+    );
     approval.resolve(allow);
     approvals.delete(aid);
     event(
@@ -666,7 +1104,7 @@ export function createEngine(
       const followUpId = id();
       store.transaction(() => {
         store.run(
-          "INSERT INTO tasks(id,conversation_id,message_id,owner_id,title,objective,status,kind,workspace,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+          "INSERT INTO tasks(id,conversation_id,message_id,owner_id,title,objective,status,kind,workspace,created_at,intent_json,requirements_json,root_task_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
           [
             followUpId,
             conversationId,
@@ -678,6 +1116,11 @@ export function createEngine(
             "work",
             task.workspace,
             now(),
+            JSON.stringify(structuredIntent(content, !!task.workspace)),
+            JSON.stringify(
+              taskRequirements({ kind: "work", workspace: task.workspace }),
+            ),
+            task.root_task_id || task.id,
           ],
         );
         store.run("INSERT INTO task_dependencies VALUES(?,?)", [
@@ -685,6 +1128,11 @@ export function createEngine(
           task.id,
         ]);
       });
+      createOutcome(
+        followUpId,
+        content,
+        structuredIntent(content, !!task.workspace).constraints,
+      );
       event(followUpId, "task.queued", "Queued after the current work.");
       emit();
       return "queued";

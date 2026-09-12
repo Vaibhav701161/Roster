@@ -1,6 +1,6 @@
 # Roster
 
-**The open-source desktop workspace for supervising Codex and Claude Code.**
+**The open-source desktop workspace for verified AI engineering work.**
 
 Roster gives local AI workers a shared home. Create specialists, organize teams, assign work, inspect changes, review approvals, and keep the full record on your machine.
 
@@ -13,8 +13,12 @@ AI coding tools are most useful when their work is easy to direct, review, and c
 - Create persistent workers with their own role, instructions, memory, provider choice, and workspace.
 - Organize workers into teams for structured handoffs and dependency-aware tasks.
 - Send a constraint while work is active or queue a follow-up for later.
-- Review approval requests before a runtime changes files or runs consequential commands.
-- Inspect actual Git changes from the authorized workspace.
+- Set one permission policy per worker, independent of their selected runtime.
+- Give Git-backed coding tasks isolated worktrees that preserve the user's checkout.
+- Track outcome contracts, acceptance criteria, review verdicts, evidence, and durable work receipts.
+- Use bounded repair and re-review cycles when independent verification finds a problem.
+- Resolve approvals and verification blockers in one Needs You inbox.
+- Inspect actual Git changes relative to the task's starting revision.
 - Resume interrupted work after a restart with its saved conversation and instructions.
 - Keep conversations, attachments, task history, and local data under your control.
 
@@ -33,7 +37,7 @@ Roster is an early desktop alpha. It is usable for local experimentation and act
 ### Run from source
 
 ```sh
-git clone https://github.com/OWNER/roster.git
+git clone https://github.com/Vaibhav701161/Roster.git
 cd roster
 npm ci
 npm run dev:desktop
@@ -71,7 +75,7 @@ flowchart LR
   O --> C[Codex]
   O --> L[Claude Code]
   O --> H[Compatible LLM]
-  C --> W[Authorized workspace]
+  C --> W[Isolated task worktree]
   L --> W
   D --> S[(Local SQLite)]
 ```
@@ -102,9 +106,9 @@ Roster binds its API to loopback, validates requests, scopes workspace operation
 
 - Roster is desktop-only and local-first.
 - Attachments are readable text and source files, limited to five files of 200 KB each.
-- Workspaces that overlap are serialized to avoid conflicting edits.
-- Automated Git worktrees, merges, and deployments are planned work, not current behavior.
-- A review is shown as reviewed when its run completes. Structured pass, fail, repair, and verification loops are planned work.
+- Git-backed coding work runs in task-scoped worktrees. Roster does not silently merge branches into the user's checkout.
+- Reviews require a structured pass, concerns, fail, or unable-to-verify verdict. Concerns and failures can trigger up to three repair cycles before Roster asks for help.
+- Outcome contracts, evidence, and receipts cover the current local workflow. Connected-service evidence and deployment workflows remain in the backlog.
 - Real Claude Code acceptance has not been run on this development machine because Claude Code is not installed here.
 - macOS signing, notarization, Gatekeeper, and hardware-specific provider testing require Apple credentials and Mac test hardware.
 

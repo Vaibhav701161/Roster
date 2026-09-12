@@ -11,6 +11,7 @@ import { createEngine } from "./engine.mjs";
 import { cleanError } from "./runtime.mjs";
 import { createVault, providerKey } from "./vault.mjs";
 import { acquireLock } from "./lock.mjs";
+import { taskInspection } from "./worktree.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
 const short = z.string().trim().min(1).max(100);
@@ -21,6 +22,9 @@ const agentSchema = z.object({
   instructions: z.string().max(8000).default(""),
   color: z.enum(["green", "blue", "peach", "purple", "gold"]).default("green"),
   provider: z.enum(["auto", "codex", "claude", "compatible"]).default("auto"),
+  permission_level: z
+    .enum(["read_only", "standard", "autonomous"])
+    .default("standard"),
   workspace: z.string().max(1000).default(""),
   benched: z.boolean().default(false),
 });
@@ -98,7 +102,7 @@ export async function createServer({
   };
   function snapshot() {
     const tasks = store.all(
-      "SELECT id,conversation_id,message_id,owner_id,title,status,kind,workspace,error,verification,created_at,started_at,completed_at,'' result,'' objective FROM tasks ORDER BY CASE WHEN status IN ('running','waiting_approval','queued','waiting_dependency') THEN 0 ELSE 1 END,created_at DESC LIMIT 500",
+      "SELECT id,conversation_id,message_id,owner_id,title,status,kind,workspace,error,verification,created_at,started_at,completed_at,'' result,'' objective,root_task_id,repository,base_commit,branch,worktree_path FROM tasks ORDER BY CASE WHEN status IN ('running','waiting_approval','queued','waiting_dependency') THEN 0 ELSE 1 END,created_at DESC LIMIT 500",
     );
     const agents = store
       .all("SELECT * FROM agents ORDER BY created_at")
@@ -134,12 +138,16 @@ export async function createServer({
       approvals: store.all(
         "SELECT * FROM approvals ORDER BY created_at DESC LIMIT 100",
       ),
+      needsYou: store.all(
+        "SELECT * FROM attention_items WHERE status='open' ORDER BY created_at DESC LIMIT 100",
+      ),
       memories: store.all("SELECT * FROM memories"),
       providers: engine.health,
       planning: [...engine.planning.keys()],
       settings: {
         theme: store.setting("theme", "light"),
         parallelLimit: store.setting("parallelLimit", 2),
+        repairLimit: store.setting("repairLimit", 3),
         compatible: store.setting("compatible"),
         hasKey: !!providerKey(store, vault),
         canSaveKey: !!vault,
@@ -169,7 +177,7 @@ export async function createServer({
     const aid = id(),
       cid = id();
     store.transaction(() => {
-      store.run("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?,?)", [
+      store.run("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?,?,?)", [
         aid,
         a.name,
         a.role,
@@ -180,6 +188,7 @@ export async function createServer({
         a.workspace,
         a.benched ? 1 : 0,
         now(),
+        a.permission_level,
       ]);
       store.run(
         "INSERT INTO conversations(id,agent_id,name,created_at,updated_at) VALUES(?,?,?,?,?)",
@@ -202,7 +211,7 @@ export async function createServer({
       );
     store.transaction(() => {
       store.run(
-        "UPDATE agents SET name=?,role=?,description=?,instructions=?,color=?,provider=?,workspace=?,benched=? WHERE id=?",
+        "UPDATE agents SET name=?,role=?,description=?,instructions=?,color=?,provider=?,workspace=?,benched=?,permission_level=? WHERE id=?",
         [
           a.name,
           a.role,
@@ -212,6 +221,7 @@ export async function createServer({
           a.provider,
           a.workspace,
           a.benched ? 1 : 0,
+          a.permission_level,
           req.params.id,
         ],
       );
@@ -391,43 +401,29 @@ export async function createServer({
         "SELECT t.* FROM tasks t JOIN task_dependencies d ON t.id=d.depends_on WHERE d.task_id=?",
         [req.params.id],
       ),
+      outcome: store.one("SELECT * FROM outcome_contracts WHERE task_id=?", [
+        req.params.id,
+      ]),
+      criteria: store.all(
+        "SELECT c.* FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=? ORDER BY c.created_at",
+        [req.params.id],
+      ),
+      evidence: store.all(
+        "SELECT * FROM evidence WHERE task_id=? ORDER BY created_at",
+        [req.params.id],
+      ),
+      review: store.one("SELECT * FROM review_verdicts WHERE task_id=?", [
+        req.params.id,
+      ]),
+      receipt: store.one("SELECT * FROM work_receipts WHERE task_id=?", [
+        req.params.id,
+      ]),
     }),
   );
   app.get("/api/tasks/:id/inspection", async (req, res) => {
     const task = must("tasks", req.params.id);
-    if (!task.workspace)
-      return res.json({
-        available: false,
-        reason: "This task has no project folder.",
-      });
     try {
-      const options = {
-        cwd: task.workspace,
-        windowsHide: true,
-        timeout: 12000,
-        maxBuffer: 512 * 1024,
-      };
-      const [status, diff] = await Promise.all([
-        exec("git", ["status", "--porcelain=v1"], options),
-        exec(
-          "git",
-          ["diff", "--no-ext-diff", "--no-color", "--", "."],
-          options,
-        ),
-      ]);
-      const files = status.stdout
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map((line) => ({
-          status: line.slice(0, 2).trim() || "?",
-          path: line.slice(3),
-        }));
-      res.json({
-        available: true,
-        files,
-        diff: diff.stdout.slice(0, 500000),
-        truncated: diff.stdout.length > 500000,
-      });
+      res.json(await taskInspection(task));
     } catch {
       res.json({
         available: false,
@@ -543,6 +539,7 @@ export async function createServer({
       .object({
         theme: z.enum(["light", "dark", "system"]).optional(),
         parallelLimit: z.number().int().min(1).max(4).optional(),
+        repairLimit: z.number().int().min(1).max(5).optional(),
         workspaceName: short.optional(),
         compatible: z
           .object({ name: short, endpoint: z.string().url(), model: short })

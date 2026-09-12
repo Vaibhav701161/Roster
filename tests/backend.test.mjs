@@ -107,6 +107,22 @@ test("team routing, dependency outputs, approval pause/resume, explicit mentions
     calls = [],
     approval = false;
   const f = await fixture(async (o) => {
+    if (o.outputSchema?.properties?.verdict) {
+      return {
+        text: JSON.stringify({
+          verdict: "pass",
+          summary: "The plan is complete and review checks passed.",
+          issues: [],
+          checks: [
+            {
+              name: "Plan review",
+              status: "pass",
+              evidence: "Reviewed dependency output.",
+            },
+          ],
+        }),
+      };
+    }
     if (o.outputSchema) {
       assert.ok(!o.prompt.includes("Bench Worker"));
       return {
@@ -174,12 +190,12 @@ test("team routing, dependency outputs, approval pause/resume, explicit mentions
         f.app.store.all("SELECT * FROM tasks WHERE status='completed'")
           .length === 2,
     );
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 1);
     assert.equal(
       f.app.store.one("SELECT verification FROM tasks WHERE id=?", [
         pending.task_id,
       ]).verification,
-      "reviewed",
+      "verified",
     );
     await f.request(`/conversations/${team.conversationId}/messages`, "POST", {
       content: "@Alex inspect the plan.",
@@ -381,6 +397,54 @@ test("work inspection exposes the authorized workspace's real Git change", async
     assert.deepEqual(inspection.files, [{ status: "M", path: "example.txt" }]);
     assert.match(inspection.diff, /-before/);
     assert.match(inspection.diff, /\+after/);
+  } finally {
+    await f.app.close();
+  }
+});
+
+test("coding work receives an isolated worktree with a persisted outcome and task-scoped diff", async () => {
+  const workspace = fs.mkdtempSync(
+    path.join(os.tmpdir(), "roster-worktree-test-"),
+  );
+  execFileSync("git", ["init"], { cwd: workspace });
+  execFileSync("git", ["config", "user.email", "roster-test@example.invalid"], {
+    cwd: workspace,
+  });
+  execFileSync("git", ["config", "user.name", "Roster test"], {
+    cwd: workspace,
+  });
+  fs.writeFileSync(path.join(workspace, "example.txt"), "before\n");
+  execFileSync("git", ["add", "example.txt"], { cwd: workspace });
+  execFileSync("git", ["commit", "-m", "initial"], { cwd: workspace });
+  let executionWorkspace = "";
+  const f = await fixture(async (o) => {
+    executionWorkspace = o.cwd;
+    fs.writeFileSync(path.join(o.cwd, "example.txt"), "after\n");
+    return { text: "The fix is ready for review." };
+  });
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex", { workspace }));
+    await f.request(`/conversations/${a.conversationId}/messages`, "POST", {
+      content: "Fix the example file. Do not change the database schema.",
+    });
+    const task = await until(() =>
+      f.app.store.one("SELECT * FROM tasks WHERE status='completed'"),
+    );
+    assert.notEqual(executionWorkspace, workspace);
+    assert.equal(task.worktree_path, executionWorkspace);
+    assert.match(task.branch, /^roster\/task-/);
+    assert.equal(
+      fs.readFileSync(path.join(workspace, "example.txt"), "utf8"),
+      "before\n",
+    );
+    assert.equal(
+      f.app.store.one("SELECT goal FROM outcome_contracts WHERE task_id=?", [
+        task.id,
+      ]).goal,
+      task.objective,
+    );
+    const inspection = await f.request(`/tasks/${task.id}/inspection`);
+    assert.match(inspection.diff, /after/);
   } finally {
     await f.app.close();
   }

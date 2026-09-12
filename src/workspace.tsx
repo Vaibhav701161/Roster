@@ -48,6 +48,7 @@ export default function WorkspaceView(p: Props) {
     Roster: "Good people for the work you care about.",
     Teams: "A shared purpose. The right people. One conversation.",
     Work: "Keep up with what your team is working on.",
+    "Needs You": "The decisions and approvals that need your attention.",
     Files: "Everything you’ve shared, all in one place.",
     Activity: "The useful details behind the conversation.",
     Settings: "Make yourself at home.",
@@ -323,6 +324,41 @@ export default function WorkspaceView(p: Props) {
                     <ChevronRight size={16} />
                   </button>
                 ))}
+            </div>
+          )}
+        </>
+      )}
+      {view === "Needs You" && (
+        <>
+          {!state.needsYou.length ? (
+            <Empty
+              icon={CheckCheck}
+              title="You are all caught up."
+              text="Roster will collect decisions, approvals, and verification blockers here when your attention can move work forward."
+            />
+          ) : (
+            <div className="work-list">
+              {state.needsYou.map((item) => {
+                const task = state.tasks.find((t) => t.id === item.task_id);
+                return (
+                  <button
+                    key={item.id}
+                    className="work-row"
+                    onClick={() => task && onTask(task.id)}
+                  >
+                    <span className="work-name">
+                      <strong>{item.title}</strong>
+                      <small>{item.detail}</small>
+                    </span>
+                    {task && (
+                      <span className={`status-pill ${task.status}`}>
+                        {statusLabel[task.status]}
+                      </span>
+                    )}
+                    <ChevronRight size={16} />
+                  </button>
+                );
+              })}
             </div>
           )}
         </>
@@ -759,7 +795,8 @@ function SettingsView({ state, act, notify }: Props) {
             <div>
               <strong>Parallel workers</strong>
               <small>
-                Workers sharing a project take turns to avoid conflicting edits.
+                Coding tasks use isolated Git workspaces when the project is
+                ready for them.
               </small>
             </div>
             <select
@@ -794,10 +831,33 @@ function SettingsView({ state, act, notify }: Props) {
             <div>
               <strong>Changes stay under your control</strong>
               <small>
-                Workers start with read-only project access. Requests to change
-                files or run consequential commands appear in chat.
+                Each worker follows the project access level in their profile.
+                External side effects still appear for approval.
               </small>
             </div>
+          </div>
+          <div className="setting-row">
+            <div>
+              <strong>Repair attempts</strong>
+              <small>
+                Roster asks you after this many review and repair cycles.
+              </small>
+            </div>
+            <select
+              aria-label="Repair attempt limit"
+              value={state.settings.repairLimit}
+              onChange={(e) =>
+                act(() =>
+                  api("/settings", "POST", {
+                    repairLimit: Number(e.target.value),
+                  }),
+                )
+              }
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n}>{n}</option>
+              ))}
+            </select>
           </div>
           {window.rosterDesktop && (
             <div className="setting-row">

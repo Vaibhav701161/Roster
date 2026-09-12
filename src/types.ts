@@ -6,6 +6,7 @@ export type Agent = {
   instructions: string;
   color: string;
   provider: string;
+  permission_level: "read_only" | "standard" | "autonomous";
   workspace: string;
   benched: boolean;
   status: string;
@@ -57,6 +58,11 @@ export type Task = {
   created_at: string;
   started_at: string;
   completed_at: string;
+  root_task_id?: string;
+  repository?: string;
+  base_commit?: string;
+  branch?: string;
+  worktree_path?: string;
 };
 export type Approval = {
   id: string;
@@ -77,6 +83,7 @@ export type Provider = {
 export type Settings = {
   theme: string;
   parallelLimit: number;
+  repairLimit: number;
   compatible: { name: string; endpoint: string; model: string } | null;
   hasKey: boolean;
   canSaveKey: boolean;
@@ -90,16 +97,49 @@ export type State = {
   conversations: Conversation[];
   tasks: Task[];
   approvals: Approval[];
+  needsYou: AttentionItem[];
   memories: Memory[];
   providers: Provider[];
   planning: string[];
   settings: Settings;
+};
+export type AttentionItem = {
+  id: string;
+  task_id: string | null;
+  type: string;
+  title: string;
+  detail: string;
+  status: string;
+  action_json: string;
+  created_at: string;
 };
 export type Attachment = { name: string; content: string };
 export type TaskDetail = {
   task: Task;
   events: { id: string; type: string; detail: string; created_at: string }[];
   dependencies: Task[];
+  outcome?: {
+    id: string;
+    goal: string;
+    status: string;
+    constraints_json: string;
+  };
+  criteria: { id: string; type: string; description: string; status: string }[];
+  evidence: {
+    id: string;
+    type: string;
+    source: string;
+    status: string;
+    summary: string;
+    created_at: string;
+  }[];
+  review?: {
+    verdict: string;
+    summary: string;
+    issues_json: string;
+    checks_json: string;
+  };
+  receipt?: { id: string; content: string; created_at: string };
 };
 export const activeStatuses = [
   "running",

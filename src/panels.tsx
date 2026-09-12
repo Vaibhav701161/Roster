@@ -38,6 +38,7 @@ const defaults = {
   instructions: "",
   color: "green",
   provider: "auto",
+  permission_level: "standard" as const,
   workspace: "",
   benched: false,
 };
@@ -182,6 +183,21 @@ export function WorkerModal({
                 <option value="claude">Claude Code</option>
                 <option value="compatible">OpenAI-compatible</option>
               </select>
+            </label>
+            <label className="field">
+              Project access
+              <select
+                value={form.permission_level}
+                onChange={(e) => change("permission_level", e.target.value)}
+              >
+                <option value="read_only">Read only</option>
+                <option value="standard">Standard</option>
+                <option value="autonomous">Autonomous</option>
+              </select>
+              <small>
+                Standard work can edit the attached project and run normal
+                development commands. External side effects still need approval.
+              </small>
             </label>
             <label className="field">
               Persistent instructions
@@ -653,6 +669,43 @@ export function TaskPanel({
               </form>
             )}
           </section>
+          {detail?.outcome && (
+            <section className="drawer-section">
+              <h3>Done when</h3>
+              <p>{detail.outcome.goal}</p>
+              {detail.criteria.map((criterion) => (
+                <div className="detail-pair" key={criterion.id}>
+                  <span>
+                    {criterion.status === "pass" ? "Checked" : "Pending"}
+                  </span>
+                  <strong>{criterion.description}</strong>
+                </div>
+              ))}
+            </section>
+          )}
+          {detail?.review && (
+            <section className="drawer-section">
+              <h3>Review: {detail.review.verdict.replaceAll("_", " ")}</h3>
+              <p>{detail.review.summary}</p>
+            </section>
+          )}
+          {detail?.evidence.length ? (
+            <section className="drawer-section">
+              <h3>Evidence</h3>
+              {detail.evidence.map((item) => (
+                <div className="detail-pair" key={item.id}>
+                  <span>{item.status}</span>
+                  <strong>{item.summary}</strong>
+                </div>
+              ))}
+            </section>
+          ) : null}
+          {detail?.receipt && (
+            <section className="drawer-section">
+              <h3>Work receipt</h3>
+              <pre className="work-diff">{detail.receipt.content}</pre>
+            </section>
+          )}
           {detail?.dependencies.length ? (
             <section className="drawer-section">
               <h3>Earlier work</h3>

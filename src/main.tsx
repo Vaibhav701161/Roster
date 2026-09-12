@@ -63,7 +63,14 @@ import "@fontsource/dm-sans/latin-600.css";
 import "@fontsource/dm-sans/latin-700.css";
 const Markdown = lazy(() => import("./markdown"));
 type View =
-  "Chats" | "Roster" | "Teams" | "Work" | "Files" | "Activity" | "Settings";
+  | "Chats"
+  | "Roster"
+  | "Teams"
+  | "Work"
+  | "Needs You"
+  | "Files"
+  | "Activity"
+  | "Settings";
 export const templates = [
   {
     name: "Alex",
@@ -523,12 +530,11 @@ export function App() {
     { name: "Roster", icon: UserRound },
     { name: "Teams", icon: Users },
     { name: "Work", icon: CheckCheck },
+    { name: "Needs You", icon: AlertCircle },
     { name: "Files", icon: Folder },
     { name: "Activity", icon: Activity },
   ] as const;
-  const needsYou = state.tasks.filter(
-    (t) => t.status === "waiting_approval",
-  ).length;
+  const needsYou = state.needsYou.length;
   const conversations = state.conversations.filter(
     (c) =>
       (filter === "Archived" ? c.archived : !c.archived) &&
@@ -589,7 +595,7 @@ export function App() {
               {name === "Roster" && state.agents.length > 0 && (
                 <small>{state.agents.length}</small>
               )}
-              {name === "Work" && needsYou > 0 && (
+              {name === "Needs You" && needsYou > 0 && (
                 <small className="attention">{needsYou}</small>
               )}
             </button>

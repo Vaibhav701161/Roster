@@ -52,6 +52,27 @@ export async function openStore(directory) {
       CREATE INDEX task_instruction_task ON task_instructions(task_id,created_at);
       INSERT INTO migration VALUES(3,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=4")) {
+    db.exec(`BEGIN;
+      ALTER TABLE agents ADD COLUMN permission_level TEXT NOT NULL DEFAULT 'standard';
+      ALTER TABLE tasks ADD COLUMN intent_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE tasks ADD COLUMN requirements_json TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE tasks ADD COLUMN root_task_id TEXT;
+      ALTER TABLE tasks ADD COLUMN repository TEXT NOT NULL DEFAULT '';
+      ALTER TABLE tasks ADD COLUMN base_commit TEXT NOT NULL DEFAULT '';
+      ALTER TABLE tasks ADD COLUMN branch TEXT NOT NULL DEFAULT '';
+      ALTER TABLE tasks ADD COLUMN worktree_path TEXT NOT NULL DEFAULT '';
+      CREATE TABLE outcome_contracts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,goal TEXT NOT NULL,constraints_json TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL DEFAULT 'planning',created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+      CREATE TABLE acceptance_criteria(id TEXT PRIMARY KEY,outcome_id TEXT NOT NULL REFERENCES outcome_contracts(id) ON DELETE CASCADE,type TEXT NOT NULL,description TEXT NOT NULL,command TEXT NOT NULL DEFAULT '',status TEXT NOT NULL DEFAULT 'pending',evidence_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+      CREATE TABLE evidence(id TEXT PRIMARY KEY,task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,outcome_id TEXT REFERENCES outcome_contracts(id) ON DELETE CASCADE,type TEXT NOT NULL,source TEXT NOT NULL,status TEXT NOT NULL,summary TEXT NOT NULL,artifact_id TEXT,external_url TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
+      CREATE TABLE review_verdicts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,verdict TEXT NOT NULL,summary TEXT NOT NULL,issues_json TEXT NOT NULL DEFAULT '[]',checks_json TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL);
+      CREATE TABLE work_receipts(id TEXT PRIMARY KEY,task_id TEXT NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,outcome_id TEXT REFERENCES outcome_contracts(id) ON DELETE SET NULL,content TEXT NOT NULL,created_at TEXT NOT NULL);
+      CREATE TABLE attention_items(id TEXT PRIMARY KEY,task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE,type TEXT NOT NULL,title TEXT NOT NULL,detail TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',action_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,resolved_at TEXT);
+      CREATE INDEX task_root ON tasks(root_task_id,created_at);
+      CREATE INDEX evidence_task ON evidence(task_id,created_at);
+      CREATE INDEX attention_open ON attention_items(status,created_at);
+      INSERT INTO migration VALUES(4,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

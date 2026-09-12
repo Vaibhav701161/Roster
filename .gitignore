@@ -6,3 +6,4 @@ release/
 test-results/
 *.log
 *-handoff-*.zip
+.roster/worktrees/

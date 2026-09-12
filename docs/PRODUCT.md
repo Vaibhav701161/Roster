@@ -8,4 +8,6 @@ The desktop app uses the supplied logo geometry, a restrained green theme, a fam
 
 Normal conversation does not display a task card. Actionable requests create visible work. Agents’ working and approval states come from actual execution facts. Internal reasoning is not forwarded to the frontend.
 
-Completion is intentionally separated from verification: a finished runtime turn is completed; an independent reviewer is reviewed; explicit verification includes evidence. The product does not infer successful tests from confident prose.
+Completion is intentionally separated from verification: a finished runtime turn is completed; an independent reviewer must provide a structured verdict; a verified outcome has recorded evidence. The product does not infer successful tests from confident prose.
+
+Git-backed coding tasks receive a task-scoped worktree. The task records its repository, starting revision, branch, and worktree path, and Roster does not silently merge a worker branch into the user's checkout. The Work view shows outcome criteria and evidence. Needs You aggregates approvals, unavailable compatible runtimes, failed verification, and exhausted repair cycles.
