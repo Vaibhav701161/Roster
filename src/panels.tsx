@@ -40,6 +40,7 @@ const defaults = {
   provider: "auto",
   permission_level: "standard" as const,
   workspace: "",
+  avatar_data: "",
   benched: false,
 };
 export function WorkerModal({
@@ -103,7 +104,12 @@ export function WorkerModal({
             </div>
           )}
           <div className="avatar-picker">
-            <Avatar name={form.name || "R"} color={form.color} size="large" />
+            <Avatar
+              name={form.name || "R"}
+              color={form.color}
+              image={form.avatar_data}
+              size="large"
+            />
             <div>
               <p className="muted-note" style={{ margin: "0 0 10px" }}>
                 A familiar face in your chat list
@@ -119,6 +125,39 @@ export function WorkerModal({
                   />
                 ))}
               </div>
+              <label className="text-button" style={{ display: "inline-flex" }}>
+                Upload photo
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  hidden
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 350000) {
+                      setError(
+                        "Choose a PNG, JPEG, or WebP image under 350 KB.",
+                      );
+                      return;
+                    }
+                    const reader = new FileReader();
+                    reader.onload = () =>
+                      change("avatar_data", String(reader.result || ""));
+                    reader.onerror = () =>
+                      setError("Could not read that image.");
+                    reader.readAsDataURL(file);
+                  }}
+                />
+              </label>
+              {form.avatar_data && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => change("avatar_data", "")}
+                >
+                  Use initials
+                </button>
+              )}
             </div>
           </div>
           <div className="form-row">
@@ -446,7 +485,12 @@ export function TeamModal({
                     })
                   }
                 />
-                <Avatar name={a.name} color={a.color} size="small" />
+                <Avatar
+                  name={a.name}
+                  color={a.color}
+                  image={a.avatar_data}
+                  size="small"
+                />
                 <span>
                   <strong>{a.name}</strong>
                   <small>
@@ -541,6 +585,7 @@ export function ProfilePanel({
         <Avatar
           name={entity.name}
           color={agent?.color}
+          image={agent?.avatar_data}
           team={!!team}
           size="large"
           members={
@@ -602,7 +647,12 @@ export function ProfilePanel({
             const a = state.agents.find((a) => a.id === id);
             return a ? (
               <div className="member-option" key={id}>
-                <Avatar name={a.name} color={a.color} size="small" />
+                <Avatar
+                  name={a.name}
+                  color={a.color}
+                  image={a.avatar_data}
+                  size="small"
+                />
                 <span>
                   <strong>{a.name}</strong>
                   <small>

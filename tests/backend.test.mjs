@@ -103,6 +103,36 @@ test("worker, team, attachment, memory and conversation persist across restart",
   }
 });
 
+test("worker avatars stay local and accept only bounded image data", async () => {
+  const f = await fixture(async () => ({ text: "unused" }));
+  try {
+    const avatar = "data:image/png;base64,aGVsbG8=";
+    const created = await f.request(
+      "/agents",
+      "POST",
+      worker("Alex", { avatar_data: avatar }),
+    );
+    assert.equal(
+      f.app.store.one("SELECT avatar_data FROM agents WHERE id=?", [created.id])
+        .avatar_data,
+      avatar,
+    );
+    await assert.rejects(
+      () =>
+        f.request(
+          "/agents",
+          "POST",
+          worker("Bad image", {
+            avatar_data: "data:text/plain;base64,aGVsbG8=",
+          }),
+        ),
+      /Use a PNG, JPEG, or WebP avatar/,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
 test("team routing, dependency outputs, approval pause/resume, explicit mentions and bench exclusion", async () => {
   let members = [],
     calls = [],

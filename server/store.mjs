@@ -101,6 +101,11 @@ export async function openStore(directory) {
       CREATE TABLE project_profiles(id TEXT PRIMARY KEY,workspace TEXT NOT NULL UNIQUE,name TEXT NOT NULL,suggestions_json TEXT NOT NULL DEFAULT '[]',instructions_json TEXT NOT NULL DEFAULT '[]',updated_at TEXT NOT NULL);
       INSERT INTO migration VALUES(9,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=10")) {
+    db.exec(`BEGIN;
+      ALTER TABLE agents ADD COLUMN avatar_data TEXT NOT NULL DEFAULT '';
+      INSERT INTO migration VALUES(10,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

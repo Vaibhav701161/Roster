@@ -126,6 +126,7 @@ export function Avatar({
   size = "",
   status,
   members = [],
+  image = "",
 }: {
   name: string;
   color?: string;
@@ -133,13 +134,16 @@ export function Avatar({
   size?: string;
   status?: string;
   members?: { name: string; color?: string; status?: string }[];
+  image?: string;
 }) {
   const people = members.slice(0, 4);
   return (
     <span
       className={`avatar ${color} ${size} ${people.length ? "composite" : ""}`}
     >
-      {people.length ? (
+      {image ? (
+        <img src={image} alt="" />
+      ) : people.length ? (
         <span className="avatar-stack" aria-label={`${name} team members`}>
           {people.map((member) => (
             <i
@@ -822,6 +826,7 @@ export function App() {
                       <Avatar
                         name={conv.name}
                         color={agent?.color || "green"}
+                        image={agent?.avatar_data}
                         team={!!currentTeam}
                         members={
                           currentTeam
@@ -969,6 +974,7 @@ export function App() {
                         <Avatar
                           name={conv.name}
                           color={agent?.color}
+                          image={agent?.avatar_data}
                           team={!!currentTeam}
                           size="large"
                           members={
@@ -1287,6 +1293,7 @@ export function App() {
                               <Avatar
                                 name={a.name}
                                 color={a.color}
+                                image={a.avatar_data}
                                 size="small"
                               />
                               {a.name}

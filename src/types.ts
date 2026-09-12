@@ -8,6 +8,7 @@ export type Agent = {
   provider: string;
   permission_level: "read_only" | "standard" | "autonomous";
   workspace: string;
+  avatar_data: string;
   benched: boolean;
   status: string;
   created_at: string;

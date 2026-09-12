@@ -18,6 +18,15 @@ import { discoverMcp } from "./mcp.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
 const short = z.string().trim().min(1).max(100);
+const avatarData = z
+  .string()
+  .max(500000)
+  .refine(
+    (value) =>
+      !value ||
+      /^data:image\/(png|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(value),
+    "Use a PNG, JPEG, or WebP avatar under 350 KB.",
+  );
 const agentSchema = z.object({
   name: short,
   role: short,
@@ -29,6 +38,7 @@ const agentSchema = z.object({
     .enum(["read_only", "standard", "autonomous"])
     .default("standard"),
   workspace: z.string().max(1000).default(""),
+  avatar_data: avatarData.default(""),
   benched: z.boolean().default(false),
 });
 const teamSchema = z.object({
@@ -231,19 +241,23 @@ export async function createServer({
     const aid = id(),
       cid = id();
     store.transaction(() => {
-      store.run("INSERT INTO agents VALUES(?,?,?,?,?,?,?,?,?,?,?)", [
-        aid,
-        a.name,
-        a.role,
-        a.description,
-        a.instructions,
-        a.color,
-        a.provider,
-        a.workspace,
-        a.benched ? 1 : 0,
-        now(),
-        a.permission_level,
-      ]);
+      store.run(
+        "INSERT INTO agents(id,name,role,description,instructions,color,provider,workspace,benched,created_at,permission_level,avatar_data) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+          aid,
+          a.name,
+          a.role,
+          a.description,
+          a.instructions,
+          a.color,
+          a.provider,
+          a.workspace,
+          a.benched ? 1 : 0,
+          now(),
+          a.permission_level,
+          a.avatar_data,
+        ],
+      );
       store.run(
         "INSERT INTO conversations(id,agent_id,name,created_at,updated_at) VALUES(?,?,?,?,?)",
         [cid, aid, a.name, now(), now()],
@@ -265,7 +279,7 @@ export async function createServer({
       );
     store.transaction(() => {
       store.run(
-        "UPDATE agents SET name=?,role=?,description=?,instructions=?,color=?,provider=?,workspace=?,benched=?,permission_level=? WHERE id=?",
+        "UPDATE agents SET name=?,role=?,description=?,instructions=?,color=?,provider=?,workspace=?,benched=?,permission_level=?,avatar_data=? WHERE id=?",
         [
           a.name,
           a.role,
@@ -276,6 +290,7 @@ export async function createServer({
           a.workspace,
           a.benched ? 1 : 0,
           a.permission_level,
+          a.avatar_data,
           req.params.id,
         ],
       );

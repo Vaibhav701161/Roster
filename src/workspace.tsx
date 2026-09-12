@@ -119,7 +119,12 @@ export default function WorkspaceView(p: Props) {
                 .map((a) => (
                   <article key={a.id} className="agent-card">
                     <div className="agent-card-top">
-                      <Avatar name={a.name} color={a.color} status={a.status} />
+                      <Avatar
+                        name={a.name}
+                        color={a.color}
+                        image={a.avatar_data}
+                        status={a.status}
+                      />
                       <span className={`status-pill ${a.status}`}>
                         {statusLabel[a.status]}
                       </span>
