@@ -704,6 +704,34 @@ test("project inspection discovers local scripts and instruction files", async (
   }
 });
 
+test("message reactions are local, durable, and toggleable", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    const sent = await f.request(
+      `/conversations/${a.conversationId}/messages`,
+      "POST",
+      { content: "Hello" },
+    );
+    await f.request(`/messages/${sent.id}/reactions`, "POST", { emoji: "👍" });
+    let messages = await f.request(
+      `/conversations/${a.conversationId}/messages`,
+    );
+    assert.deepEqual(
+      messages.find((message) => message.id === sent.id).reactions,
+      ["👍"],
+    );
+    await f.request(`/messages/${sent.id}/reactions`, "POST", { emoji: "👍" });
+    messages = await f.request(`/conversations/${a.conversationId}/messages`);
+    assert.deepEqual(
+      messages.find((message) => message.id === sent.id).reactions,
+      [],
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
 test(
   "Windows secret persistence uses DPAPI and does not store the cleartext key",
   { skip: process.platform !== "win32" },

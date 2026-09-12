@@ -326,12 +326,38 @@ export async function createServer({
       "SELECT id,message_id,name,size FROM attachments WHERE conversation_id=?",
       [req.params.id],
     );
+    const reactions = store.all(
+      `SELECT r.message_id,r.emoji FROM message_reactions r JOIN messages m ON m.id=r.message_id WHERE m.conversation_id=?`,
+      [req.params.id],
+    );
     res.json(
       rows.map((m) => ({
         ...m,
         attachments: attachments.filter((a) => a.message_id === m.id),
+        reactions: reactions
+          .filter((r) => r.message_id === m.id)
+          .map((r) => r.emoji),
       })),
     );
+  });
+  app.post("/api/messages/:id/reactions", (req, res) => {
+    must("messages", req.params.id);
+    const emoji = z.string().trim().min(1).max(16).parse(req.body.emoji);
+    const existing = store.one(
+      "SELECT id FROM message_reactions WHERE message_id=? AND emoji=?",
+      [req.params.id, emoji],
+    );
+    if (existing)
+      store.run("DELETE FROM message_reactions WHERE id=?", [existing.id]);
+    else
+      store.run("INSERT INTO message_reactions VALUES(?,?,?,?)", [
+        id(),
+        req.params.id,
+        emoji,
+        now(),
+      ]);
+    changed();
+    res.json({ active: !existing });
   });
   app.patch("/api/conversations/:id", (req, res) => {
     must("conversations", req.params.id);

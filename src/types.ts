@@ -32,6 +32,7 @@ export type Conversation = {
 };
 export type Message = {
   attachments?: { id: string; name: string; size: number }[];
+  reactions?: string[];
   id: string;
   conversation_id: string;
   agent_id: string | null;

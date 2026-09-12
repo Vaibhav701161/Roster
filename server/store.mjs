@@ -80,6 +80,12 @@ export async function openStore(directory) {
       CREATE INDEX integration_tool_integration ON integration_tools(integration_id);
       INSERT INTO migration VALUES(5,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=6")) {
+    db.exec(`BEGIN;
+      CREATE TABLE message_reactions(id TEXT PRIMARY KEY,message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,emoji TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(message_id,emoji));
+      CREATE INDEX message_reaction_message ON message_reactions(message_id);
+      INSERT INTO migration VALUES(6,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

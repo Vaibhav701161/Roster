@@ -1003,6 +1003,30 @@ export function App() {
                               >
                                 Copy
                               </button>
+                              {["👍", "✨", "✅"].map((reaction) => (
+                                <button
+                                  key={reaction}
+                                  onClick={() =>
+                                    act(() =>
+                                      api(
+                                        `/messages/${m.id}/reactions`,
+                                        "POST",
+                                        { emoji: reaction },
+                                      ),
+                                    )
+                                  }
+                                  title={`React with ${reaction}`}
+                                >
+                                  {reaction}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                          {!!m.reactions?.length && (
+                            <div className="message-reactions">
+                              {m.reactions.map((reaction) => (
+                                <span key={reaction}>{reaction}</span>
+                              ))}
                             </div>
                           )}
                         </div>
