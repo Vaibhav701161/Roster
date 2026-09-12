@@ -480,6 +480,45 @@ export async function createServer({
     engine.retry(req.params.id);
     res.json({ ok: true });
   });
+  app.post("/api/tasks/:id/integration-ready", async (req, res) => {
+    const task = must("tasks", req.params.id);
+    if (task.kind !== "work" || task.status !== "completed")
+      throw new Error("Complete a coding task before preparing its handoff.");
+    const inspection = await taskInspection(task);
+    if (!inspection.available || !inspection.diff)
+      throw new Error("No task-scoped Git change is ready to hand off.");
+    const artifactId = id();
+    const filename = `${task.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").slice(0, 70) || "Roster work"}.patch`;
+    store.transaction(() => {
+      store.run("INSERT INTO artifacts VALUES(?,?,?,?,?,?,?)", [
+        artifactId,
+        task.id,
+        task.conversation_id,
+        filename,
+        inspection.diff,
+        Buffer.byteLength(inspection.diff),
+        now(),
+      ]);
+      store.run(
+        "INSERT INTO attention_items(id,task_id,type,title,detail,action_json,created_at) VALUES(?,?,?,?,?,?,?)",
+        [
+          id(),
+          task.id,
+          "integration",
+          "Work is ready to integrate",
+          "Review the task-scoped patch before applying it to your checkout.",
+          JSON.stringify({ artifactId }),
+          now(),
+        ],
+      );
+    });
+    engine.event(
+      task.id,
+      "integration.ready",
+      "Created a task-scoped patch for safe review.",
+    );
+    res.json({ artifactId });
+  });
   app.post("/api/tasks/:id/verify", (req, res) => {
     const t = must("tasks", req.params.id);
     if (t.status !== "completed")

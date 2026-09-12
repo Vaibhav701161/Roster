@@ -445,6 +445,23 @@ test("coding work receives an isolated worktree with a persisted outcome and tas
     );
     const inspection = await f.request(`/tasks/${task.id}/inspection`);
     assert.match(inspection.diff, /after/);
+    const handoff = await f.request(
+      `/tasks/${task.id}/integration-ready`,
+      "POST",
+      {},
+    );
+    assert.match(
+      f.app.store.one("SELECT content FROM artifacts WHERE id=?", [
+        handoff.artifactId,
+      ]).content,
+      /after/,
+    );
+    assert.equal(
+      f.app.store.one("SELECT type FROM attention_items WHERE task_id=?", [
+        task.id,
+      ]).type,
+      "integration",
+    );
   } finally {
     await f.app.close();
   }

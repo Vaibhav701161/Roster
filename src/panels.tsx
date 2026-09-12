@@ -645,6 +645,16 @@ export function TaskPanel({
                   Record your verification
                 </button>
               )}
+            {task.status === "completed" && task.worktree_path && (
+              <button
+                className="secondary"
+                onClick={() =>
+                  act(() => api(`/tasks/${id}/integration-ready`, "POST", {}))
+                }
+              >
+                Prepare integration patch
+              </button>
+            )}
             {verifying && (
               <form
                 onSubmit={async (e) => {
