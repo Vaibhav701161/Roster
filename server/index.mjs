@@ -494,6 +494,45 @@ export async function createServer({
     });
     res.json({ ok: true });
   });
+  app.post("/api/outcomes/:id/criteria", (req, res) => {
+    const outcome = must("outcome_contracts", req.params.id);
+    const body = z
+      .object({
+        type: z.enum([
+          "manual",
+          "command",
+          "test",
+          "build",
+          "review",
+          "browser",
+          "github_ci",
+          "deployment",
+          "sentry",
+          "external_tool",
+        ]),
+        description: z.string().trim().min(3).max(1000),
+        command: z.string().trim().max(2000).default(""),
+      })
+      .parse(req.body);
+    store.run(
+      "INSERT INTO acceptance_criteria(id,outcome_id,type,description,command,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+      [
+        id(),
+        outcome.id,
+        body.type,
+        body.description,
+        body.command,
+        now(),
+        now(),
+      ],
+    );
+    store.run("UPDATE outcome_contracts SET updated_at=? WHERE id=?", [
+      now(),
+      outcome.id,
+    ]);
+    changed();
+    res.json({ ok: true });
+  });
   app.post("/api/approvals/:id", (req, res) => {
     const { allow } = z.object({ allow: z.boolean() }).parse(req.body);
     engine.resolveApproval(req.params.id, allow);

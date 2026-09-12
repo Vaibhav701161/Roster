@@ -567,7 +567,9 @@ export function TaskPanel({
     } | null>(null),
     [error, setError] = useState(""),
     [evidence, setEvidence] = useState(""),
-    [verifying, setVerifying] = useState(false);
+    [verifying, setVerifying] = useState(false),
+    [criterion, setCriterion] = useState(""),
+    [criterionType, setCriterionType] = useState("manual");
   const task =
     detail?.task.id === id ? detail.task : state.tasks.find((t) => t.id === id);
   useEffect(() => {
@@ -681,6 +683,58 @@ export function TaskPanel({
                   <strong>{criterion.description}</strong>
                 </div>
               ))}
+              <form
+                onSubmit={async (event) => {
+                  event.preventDefault();
+                  if (!detail.outcome) return;
+                  await act(() =>
+                    api(`/outcomes/${detail.outcome!.id}/criteria`, "POST", {
+                      type: criterionType,
+                      description: criterion,
+                    }),
+                  );
+                  setCriterion("");
+                  const updated = await api<TaskDetail>(`/tasks/${id}`);
+                  setDetail(updated);
+                }}
+              >
+                <label className="field" style={{ marginTop: 14 }}>
+                  Add a completion check
+                  <input
+                    value={criterion}
+                    required
+                    minLength={3}
+                    maxLength={1000}
+                    onChange={(event) => setCriterion(event.target.value)}
+                    placeholder="For example, the login test passes"
+                  />
+                </label>
+                <select
+                  aria-label="Completion check type"
+                  value={criterionType}
+                  onChange={(event) => setCriterionType(event.target.value)}
+                >
+                  {[
+                    "manual",
+                    "command",
+                    "test",
+                    "build",
+                    "review",
+                    "browser",
+                    "github_ci",
+                    "deployment",
+                    "sentry",
+                    "external_tool",
+                  ].map((type) => (
+                    <option key={type} value={type}>
+                      {type.replaceAll("_", " ")}
+                    </option>
+                  ))}
+                </select>
+                <button className="secondary" style={{ marginTop: 8 }}>
+                  Add check
+                </button>
+              </form>
             </section>
           )}
           {detail?.review && (

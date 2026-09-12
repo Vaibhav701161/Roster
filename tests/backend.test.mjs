@@ -759,6 +759,36 @@ test("weekly digest uses only persisted verified outcome facts", async () => {
   }
 });
 
+test("users can add an explicit outcome acceptance criterion", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    await f.request(`/conversations/${a.conversationId}/messages`, "POST", {
+      content: "Fix the sample issue.",
+    });
+    const task = await until(() =>
+      f.app.store.one("SELECT * FROM tasks WHERE status='completed'"),
+    );
+    const outcome = f.app.store.one(
+      "SELECT * FROM outcome_contracts WHERE task_id=?",
+      [task.id],
+    );
+    await f.request(`/outcomes/${outcome.id}/criteria`, "POST", {
+      type: "test",
+      description: "The regression test passes",
+    });
+    assert.equal(
+      f.app.store.one(
+        "SELECT COUNT(*) count FROM acceptance_criteria WHERE outcome_id=?",
+        [outcome.id],
+      ).count,
+      3,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
 test(
   "Windows secret persistence uses DPAPI and does not store the cleartext key",
   { skip: process.platform !== "win32" },
