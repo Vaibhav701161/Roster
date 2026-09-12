@@ -1,0 +1,127 @@
+# Roster
+
+**The open-source desktop workspace for supervising Codex and Claude Code.**
+
+Roster gives local AI workers a shared home. Create specialists, organize teams, assign work, inspect changes, review approvals, and keep the full record on your machine.
+
+It is built for developers who want the convenience of a messenger without losing visibility into what their agents are doing.
+
+## Why Roster
+
+AI coding tools are most useful when their work is easy to direct, review, and continue. Roster brings those pieces into one desktop app:
+
+- Create persistent workers with their own role, instructions, memory, provider choice, and workspace.
+- Organize workers into teams for structured handoffs and dependency-aware tasks.
+- Send a constraint while work is active or queue a follow-up for later.
+- Review approval requests before a runtime changes files or runs consequential commands.
+- Inspect actual Git changes from the authorized workspace.
+- Resume interrupted work after a restart with its saved conversation and instructions.
+- Keep conversations, attachments, task history, and local data under your control.
+
+## Product status
+
+Roster is an early desktop alpha. It is usable for local experimentation and active development, not yet a public production release. See [the release checklist](docs/RELEASE_CHECKLIST.md) and [known scope](#current-scope) before using it with an important repository.
+
+## Quick start
+
+### Requirements
+
+- Node.js 24.14 or later
+- npm
+- A local Codex or Claude Code installation if you want to run those providers
+
+### Run from source
+
+```sh
+git clone https://github.com/OWNER/roster.git
+cd roster
+npm ci
+npm run dev:desktop
+```
+
+The command starts Electron, the private loopback service, database migrations, provider detection, and the desktop window.
+
+### Build installers
+
+```sh
+npm run package:win
+npm run package:linux
+npm run package:mac:arm64
+npm run package:mac:x64
+```
+
+Windows builds an NSIS installer. Linux builds AppImage and deb packages. macOS builds separate DMG and ZIP artifacts for Apple Silicon and Intel Macs. macOS public distribution requires signing and notarization. See [Development](docs/DEVELOPMENT.md#macos-releases).
+
+## Providers
+
+| Provider                   | What Roster supports                                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Codex                      | Local sign-in detection, streaming, approval cards, cancellation, and session resume through the app-server protocol.                  |
+| Claude Code                | Local executable detection, structured streaming, session IDs, cancellation, and usage reporting.                                      |
+| OpenAI-compatible services | Streaming chat completions through a configured local or HTTPS endpoint. This adapter does not provide host filesystem or shell tools. |
+
+Provider credentials are never stored in SQLite or returned through application state. The packaged desktop app uses OS-backed secure storage where Electron supports it.
+
+## How it works
+
+```mermaid
+flowchart LR
+  U[Developer] --> D[Roster desktop app]
+  D --> O[Orchestrator]
+  O --> C[Codex]
+  O --> L[Claude Code]
+  O --> H[Compatible LLM]
+  C --> W[Authorized workspace]
+  L --> W
+  D --> S[(Local SQLite)]
+```
+
+The renderer and loopback service are internal parts of the desktop application. Roster does not expose a hosted control plane or send telemetry.
+
+## Development
+
+```sh
+npm test
+npm run test:ui
+npm run lint
+npm run build
+```
+
+`npm test` uses isolated local fixtures. `npm run test:ui` exercises the renderer with browser automation and an accessibility audit. Real-provider suites consume provider usage and require an existing local sign-in:
+
+```sh
+npm run test:e2e
+npm run test:real-work
+```
+
+## Security and privacy
+
+Roster binds its API to loopback, validates requests, scopes workspace operations, and shows runtime approvals in the chat. It does not use unrestricted provider access flags. Read [SECURITY.md](SECURITY.md) before filing a vulnerability report.
+
+## Current scope
+
+- Roster is desktop-only and local-first.
+- Attachments are readable text and source files, limited to five files of 200 KB each.
+- Workspaces that overlap are serialized to avoid conflicting edits.
+- Automated Git worktrees, merges, and deployments are planned work, not current behavior.
+- A review is shown as reviewed when its run completes. Structured pass, fail, repair, and verification loops are planned work.
+- Real Claude Code acceptance has not been run on this development machine because Claude Code is not installed here.
+- macOS signing, notarization, Gatekeeper, and hardware-specific provider testing require Apple credentials and Mac test hardware.
+
+## Documentation
+
+- [Product](docs/PRODUCT.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Runtime](docs/RUNTIME.md)
+- [Orchestration](docs/ORCHESTRATION.md)
+- [Security](SECURITY.md)
+- [Development](docs/DEVELOPMENT.md)
+- [Release checklist](docs/RELEASE_CHECKLIST.md)
+
+## Contributing
+
+Roster is fully open source under the [MIT License](LICENSE). Contributions, bug reports, design feedback, and documentation improvements are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Community standards
+
+Please follow the [Code of Conduct](CODE_OF_CONDUCT.md). For security issues, use the private reporting process in [SECURITY.md](SECURITY.md), not a public issue.

@@ -1,0 +1,71 @@
+name: macOS release artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Apple Silicon
+            runner: macos-26
+            command: npm run package:mac:arm64
+          - name: Intel
+            runner: macos-26-intel
+            command: npm run package:mac:x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Import Developer ID certificate
+        if: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          CERTIFICATE_PATH="$RUNNER_TEMP/roster-signing.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/roster-signing.keychain-db"
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+      - name: Build, sign, and notarize
+        env:
+          CSC_KEYCHAIN: ${{ runner.temp }}/roster-signing.keychain-db
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: ${{ matrix.command }}
+      - name: Verify signed artifacts
+        if: ${{ secrets.MACOS_CERTIFICATE_P12 != '' }}
+        run: |
+          APP_PATH=$(find dist -name 'Roster.app' -type d -print -quit)
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          for DMG in dist/*.dmg; do
+            xcrun stapler validate "$DMG"
+            spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Roster-${{ matrix.name }}
+          path: |
+            dist/*.dmg
+            dist/*.zip

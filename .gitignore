@@ -1,0 +1,8 @@
+node_modules/
+dist/
+release/
+.roster/
+.env
+test-results/
+*.log
+*-handoff-*.zip
