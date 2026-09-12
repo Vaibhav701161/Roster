@@ -749,6 +749,24 @@ test("message reactions are local, durable, and toggleable", async () => {
   }
 });
 
+test("conversation mute persists as a local preference", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    await f.request(`/conversations/${a.conversationId}`, "PATCH", {
+      muted: true,
+    });
+    assert.equal(
+      (await f.request("/state")).conversations.find(
+        (conversation) => conversation.id === a.conversationId,
+      ).muted,
+      1,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
 test("weekly digest uses only persisted verified outcome facts", async () => {
   const f = await fixture(async () => ({ text: "response" }));
   try {

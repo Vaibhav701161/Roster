@@ -365,6 +365,7 @@ export async function createServer({
       .object({
         pinned: z.boolean().optional(),
         archived: z.boolean().optional(),
+        muted: z.boolean().optional(),
         read: z.boolean().optional(),
       })
       .parse(req.body);
@@ -376,6 +377,11 @@ export async function createServer({
     if (body.archived !== undefined)
       store.run("UPDATE conversations SET archived=? WHERE id=?", [
         body.archived ? 1 : 0,
+        req.params.id,
+      ]);
+    if (body.muted !== undefined)
+      store.run("UPDATE conversations SET muted=? WHERE id=?", [
+        body.muted ? 1 : 0,
         req.params.id,
       ]);
     if (body.read)

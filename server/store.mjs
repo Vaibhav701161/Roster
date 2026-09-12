@@ -86,6 +86,11 @@ export async function openStore(directory) {
       CREATE INDEX message_reaction_message ON message_reactions(message_id);
       INSERT INTO migration VALUES(6,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=7")) {
+    db.exec(`BEGIN;
+      ALTER TABLE conversations ADD COLUMN muted INTEGER NOT NULL DEFAULT 0;
+      INSERT INTO migration VALUES(7,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

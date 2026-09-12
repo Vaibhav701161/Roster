@@ -828,6 +828,18 @@ export function App() {
                           onClick={() => {
                             act(() =>
                               api(`/conversations/${conv.id}`, "PATCH", {
+                                muted: !conv.muted,
+                              }),
+                            );
+                            setMenu(false);
+                          }}
+                        >
+                          {conv.muted ? "Unmute chat" : "Mute chat"}
+                        </button>
+                        <button
+                          onClick={() => {
+                            act(() =>
+                              api(`/conversations/${conv.id}`, "PATCH", {
                                 archived: !conv.archived,
                               }),
                             );

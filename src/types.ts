@@ -28,6 +28,7 @@ export type Conversation = {
   unread: number;
   pinned: number;
   archived: number;
+  muted: number;
   updated_at: string;
 };
 export type Message = {
