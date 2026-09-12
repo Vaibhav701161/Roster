@@ -82,6 +82,46 @@ const reviewVerdict = z.object({
     )
     .max(100),
 });
+function jsonObjects(text) {
+  const objects = [];
+  for (
+    let start = text.indexOf("{");
+    start >= 0;
+    start = text.indexOf("{", start + 1)
+  ) {
+    let depth = 0,
+      quoted = false,
+      escaped = false;
+    for (let index = start; index < text.length; index++) {
+      const character = text[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === "\\\\") escaped = true;
+        else if (character === '"') quoted = false;
+        continue;
+      }
+      if (character === '"') quoted = true;
+      else if (character === "{") depth++;
+      else if (character === "}" && --depth === 0) {
+        objects.push(text.slice(start, index + 1));
+        break;
+      }
+    }
+  }
+  return objects;
+}
+export function parseReviewResponse(response) {
+  const candidates = [response.trim(), ...jsonObjects(response)].reverse();
+  for (const candidate of candidates) {
+    try {
+      const parsed = reviewVerdict.safeParse(JSON.parse(candidate));
+      if (parsed.success) return parsed.data;
+    } catch {
+      // A worker can emit progress before its final structured verdict.
+    }
+  }
+  return null;
+}
 function structuredIntent(text, hasWorkspace) {
   const normalized = text.trim();
   const constraints = [
@@ -736,16 +776,12 @@ export function createEngine(
       ]);
       let review = null;
       if (task.kind === "review") {
-        try {
-          review = reviewVerdict.parse(JSON.parse(response));
-        } catch {
-          review = {
-            verdict: "unable_to_verify",
-            summary: "The reviewer did not return a valid structured verdict.",
-            issues: [],
-            checks: [],
-          };
-        }
+        review = parseReviewResponse(response) || {
+          verdict: "unable_to_verify",
+          summary: "The reviewer did not return a valid structured verdict.",
+          issues: [],
+          checks: [],
+        };
         store.run(
           "INSERT INTO review_verdicts(id,task_id,verdict,summary,issues_json,checks_json,created_at) VALUES(?,?,?,?,?,?,?)",
           [

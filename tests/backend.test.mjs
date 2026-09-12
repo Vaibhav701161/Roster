@@ -149,19 +149,25 @@ test("team routing, dependency outputs, approval pause/resume, explicit mentions
     approval = false;
   const f = await fixture(async (o) => {
     if (o.outputSchema?.properties?.verdict) {
+      const verdict = JSON.stringify({
+        verdict: "pass",
+        summary: "The plan is complete and review checks passed.",
+        issues: [],
+        checks: [
+          {
+            name: "Plan review",
+            status: "pass",
+            evidence: "Reviewed dependency output.",
+          },
+        ],
+      });
       return {
-        text: JSON.stringify({
-          verdict: "pass",
-          summary: "The plan is complete and review checks passed.",
+        text: `${JSON.stringify({
+          verdict: "unable_to_verify",
+          summary: "Checking the dependency before issuing the final verdict.",
           issues: [],
-          checks: [
-            {
-              name: "Plan review",
-              status: "pass",
-              evidence: "Reviewed dependency output.",
-            },
-          ],
-        }),
+          checks: [],
+        })}\n\n${verdict}`,
       };
     }
     if (o.outputSchema) {

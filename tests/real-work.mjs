@@ -14,6 +14,15 @@ fs.writeFileSync(
   path.join(workspace, "test.mjs"),
   "import assert from 'node:assert/strict'; import {add} from './calculator.mjs'; assert.equal(add(2,3),5); assert.equal(add(-2,3),1); console.log('2 calculator checks passed');\n",
 );
+fs.writeFileSync(path.join(workspace, ".gitignore"), ".roster/\n");
+for (const args of [
+  ["init", "--initial-branch=main"],
+  ["config", "user.email", "roster-test@example.invalid"],
+  ["config", "user.name", "Roster acceptance test"],
+  ["add", "."],
+  ["commit", "-m", "Create calculator fixture"],
+])
+  execFileSync("git", args, { cwd: workspace, stdio: "ignore" });
 const service = await createServer({
   directory: path.join(directory, "data"),
   port: 0,
@@ -65,12 +74,20 @@ try {
       (a) => a.status === "pending",
     )) {
       const detail = JSON.parse(approval.detail);
+      const taskWorkspaces = [
+        workspace,
+        ...state.tasks.map((task) => task.worktree_path).filter(Boolean),
+      ];
       const isInside = (p) => {
-        const relative = path.relative(workspace, path.resolve(workspace, p));
-        return !relative.startsWith("..") && !path.isAbsolute(relative);
+        const absolute = path.resolve(p);
+        return taskWorkspaces.some((root) => {
+          const relative = path.relative(root, absolute);
+          return !relative.startsWith("..") && !path.isAbsolute(relative);
+        });
       };
-      const safeCwd =
-        path.resolve(detail.cwd).toLowerCase() === workspace.toLowerCase();
+      const safeCwd = taskWorkspaces.some(
+        (root) => path.resolve(detail.cwd).toLowerCase() === root.toLowerCase(),
+      );
       const safeChanges =
         !detail.changes ||
         detail.changes.every(
@@ -119,17 +136,41 @@ try {
     await wait(500);
   }
   assert.ok(complete, "Real work reached the test deadline");
+  const tasks = service.snapshot().tasks;
+  const main = tasks.find((t) => t.owner_id === alex.id);
+  assert.ok(main?.worktree_path, "Work task received an isolated checkout");
+  const reviewTask = tasks.find((t) => t.kind === "review");
+  assert.equal(
+    service.store.one("SELECT verdict FROM review_verdicts WHERE task_id=?", [
+      reviewTask.id,
+    ]).verdict,
+    "pass",
+    "The reviewer returned a structured passing verdict.",
+  );
+  assert.equal(main.verification, "verified");
+  assert.ok(main.has_receipt, "The verified task has a durable work receipt.");
   const checks = execFileSync(process.execPath, ["test.mjs"], {
-    cwd: workspace,
+    cwd: main.worktree_path,
     encoding: "utf8",
     timeout: 10000,
   });
-  const tasks = service.snapshot().tasks;
+  assert.match(
+    fs.readFileSync(path.join(workspace, "calculator.mjs"), "utf8"),
+    /return a - b/,
+    "The user's checkout remains unchanged until they explicitly integrate it.",
+  );
+  assert.match(
+    execFileSync("git", ["diff", "--", "calculator.mjs"], {
+      cwd: main.worktree_path,
+      encoding: "utf8",
+    }),
+    /return a \+ b/,
+    "The candidate patch contains the requested repair.",
+  );
   assert.ok(
     service.store.all("SELECT * FROM events WHERE type='action.completed'")
       .length > 0,
   );
-  const main = tasks.find((t) => t.owner_id === alex.id);
   await request(`/tasks/${main.id}/verify`, "POST", {
     evidence:
       checks.trim() +
@@ -149,7 +190,7 @@ try {
       2,
     ),
   );
-  console.log("PASS: real project changed, handed off, and verified.", {
+  console.log("PASS: isolated candidate changed, was reviewed, and verified.", {
     approvals,
     checks: checks.trim(),
   });
