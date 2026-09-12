@@ -252,10 +252,12 @@ test("cancel terminates work, expires approvals, and cancels downstream tasks", 
 });
 
 test("provider failure preserves partial output and retry can recover", async () => {
-  let attempt = 0;
+  let attempt = 0,
+    recoveryPrompt = "";
   const f = await fixture(async (o) => {
     o.onDelta("Useful partial response.");
     if (!attempt++) throw new Error("Provider test failure");
+    recoveryPrompt = o.prompt;
     return { text: "Recovered response." };
   });
   try {
@@ -278,6 +280,17 @@ test("provider failure preserves partial output and retry can recover", async ()
     assert.equal(
       f.app.store.one("SELECT result FROM tasks WHERE id=?", [t.id]).result,
       "Recovered response.",
+    );
+    assert.match(
+      recoveryPrompt,
+      /Previous attempt ended with: Provider test failure/,
+    );
+    assert.equal(
+      f.app.store.one(
+        "SELECT COUNT(*) count FROM events WHERE task_id=? AND type='task.replanned'",
+        [t.id],
+      ).count,
+      1,
     );
   } finally {
     await f.app.close();

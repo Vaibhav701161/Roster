@@ -757,7 +757,9 @@ export function TaskPanel({
                 className="primary"
                 onClick={() => act(() => api(`/tasks/${id}/retry`, "POST", {}))}
               >
-                {task.status === "interrupted" ? "Resume work" : "Retry work"}
+                {task.status === "interrupted"
+                  ? "Resume with recovery plan"
+                  : "Retry with recovery plan"}
               </button>
             )}
             {task.status === "completed" &&

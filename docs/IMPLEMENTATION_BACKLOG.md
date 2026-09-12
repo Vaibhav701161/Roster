@@ -13,7 +13,7 @@ This document tracks the product work from the current engineering and messenger
 
 ## Next
 
-- [ ] Add bounded replanning and project recipes.
+- [x] Add bounded replanning and team recipes.
 - [x] Support explicit instruction import and durable, bounded project profiles.
 - [x] Add the local integration control plane with credential-aware health, risk, scoped tools, and graceful unavailable states.
 - [x] Discover remote MCP servers using initialization and protected-resource metadata without sending credentials.

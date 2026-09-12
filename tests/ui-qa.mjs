@@ -153,7 +153,9 @@ try {
     .locator(".task-chat-card")
     .filter({ hasText: "Couldn’t finish" })
     .click();
-  await page.getByRole("button", { name: "Retry work", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Retry with recovery plan", exact: true })
+    .click();
   await waitFor(() =>
     service.store.one("SELECT * FROM tasks WHERE result='Retry succeeded.'"),
   );

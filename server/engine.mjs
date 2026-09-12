@@ -1098,11 +1098,26 @@ export function createEngine(
       throw new Error(
         "Only interrupted, failed, or cancelled work can be resumed.",
       );
+    const attempts = store.one(
+      "SELECT COUNT(*) count FROM events WHERE task_id=? AND type='task.replanned'",
+      [taskId],
+    ).count;
+    if (attempts >= store.setting("repairLimit", 3))
+      throw new Error(
+        "This work has reached its recovery limit. Add guidance in the chat before trying again.",
+      );
+    const recovery = t.error
+      ? `Previous attempt ended with: ${t.error}\n\nReassess the approach, preserve any completed work, and continue only with a safe next step.`
+      : "Reassess the interrupted work before continuing. Preserve any completed work and use a safe next step.";
+    store.run(
+      "INSERT INTO task_instructions(id,task_id,kind,content,created_at) VALUES(?,?,?,?,?)",
+      [id(), taskId, "replan", recovery, now()],
+    );
     store.run(
       "UPDATE tasks SET status='queued',error='',completed_at=NULL WHERE id=?",
       [taskId],
     );
-    event(taskId, "task.retried", "Retry requested by you.");
+    event(taskId, "task.replanned", "Recovery attempt requested by you.");
     schedule();
   }
   function steer(conversationId, messageId, content) {
