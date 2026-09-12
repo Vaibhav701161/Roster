@@ -103,6 +103,7 @@ export type State = {
   memories: Memory[];
   providers: Provider[];
   integrations: Integration[];
+  mcpConnections: McpConnection[];
   planning: string[];
   settings: Settings;
 };
@@ -113,6 +114,16 @@ export type Integration = {
   type: string;
   status: string;
   detail: string;
+  capabilities_json: string;
+  updated_at: string;
+};
+export type McpConnection = {
+  id: string;
+  url: string;
+  server_name: string;
+  status: string;
+  detail: string;
+  protocol_version: string;
   capabilities_json: string;
   updated_at: string;
 };

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import http from "node:http";
 import { execFileSync } from "node:child_process";
 import { createServer } from "../server/index.mjs";
 import { validatePlan } from "../server/engine.mjs";
@@ -694,6 +695,62 @@ test("integration refresh persists scoped engineering tool status without creden
     );
   } finally {
     await f.app.close();
+  }
+});
+
+test("MCP discovery records public capabilities and authorization metadata without tokens", async () => {
+  const server = http.createServer((req, res) => {
+    const origin = `http://${req.headers.host}`;
+    if (req.url === "/secure") {
+      res.writeHead(401, {
+        "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/secure"`,
+      });
+      return res.end();
+    }
+    if (req.url === "/.well-known/oauth-protected-resource/secure") {
+      res.setHeader("Content-Type", "application/json");
+      return res.end(
+        JSON.stringify({
+          authorization_servers: ["https://login.example.com"],
+          scopes_supported: ["issues:read"],
+        }),
+      );
+    }
+    if (req.url === "/public") {
+      res.setHeader("Content-Type", "application/json");
+      return res.end(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: "roster-discovery",
+          result: {
+            protocolVersion: "2025-11-25",
+            serverInfo: { name: "Local MCP" },
+            capabilities: { tools: {} },
+          },
+        }),
+      );
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const f = await fixture(async () => ({ text: "unused" }));
+  try {
+    const secure = await f.request("/mcp/discover", "POST", {
+      url: `http://127.0.0.1:${port}/secure`,
+    });
+    assert.equal(secure.status, "authentication_required");
+    assert.deepEqual(secure.authMetadata.scopes_supported, ["issues:read"]);
+    const publicServer = await f.request("/mcp/discover", "POST", {
+      url: `http://127.0.0.1:${port}/public`,
+    });
+    assert.equal(publicServer.serverName, "Local MCP");
+    assert.deepEqual(publicServer.capabilities, ["tools"]);
+    const state = await f.request("/state");
+    assert.equal(state.mcpConnections.length, 2);
+  } finally {
+    await f.app.close();
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

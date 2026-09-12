@@ -14,6 +14,7 @@ import { acquireLock } from "./lock.mjs";
 import { taskInspection } from "./worktree.mjs";
 import { refreshIntegrations } from "./integrations.mjs";
 import { inspectProject } from "./projects.mjs";
+import { discoverMcp } from "./mcp.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
 const short = z.string().trim().min(1).max(100);
@@ -145,6 +146,9 @@ export async function createServer({
       ),
       memories: store.all("SELECT * FROM memories"),
       integrations: store.all("SELECT * FROM integrations ORDER BY name"),
+      mcpConnections: store.all(
+        "SELECT * FROM mcp_connections ORDER BY updated_at DESC",
+      ),
       providers: engine.health,
       planning: [...engine.planning.keys()],
       settings: {
@@ -172,6 +176,29 @@ export async function createServer({
     const integrations = await refreshIntegrations(store);
     changed();
     res.json({ integrations });
+  });
+  app.post("/api/mcp/discover", async (req, res) => {
+    const { url } = z
+      .object({ url: z.string().trim().min(1).max(2000) })
+      .parse(req.body);
+    const connection = await discoverMcp(url);
+    store.run(
+      "INSERT INTO mcp_connections(id,url,server_name,status,detail,protocol_version,capabilities_json,auth_metadata_json,discovered_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET server_name=excluded.server_name,status=excluded.status,detail=excluded.detail,protocol_version=excluded.protocol_version,capabilities_json=excluded.capabilities_json,auth_metadata_json=excluded.auth_metadata_json,updated_at=excluded.updated_at",
+      [
+        connection.id,
+        connection.url,
+        connection.serverName,
+        connection.status,
+        connection.detail,
+        connection.protocolVersion,
+        JSON.stringify(connection.capabilities),
+        JSON.stringify(connection.authMetadata),
+        now(),
+        now(),
+      ],
+    );
+    changed();
+    res.json(connection);
   });
   app.get("/api/events", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");

@@ -91,6 +91,11 @@ export async function openStore(directory) {
       ALTER TABLE conversations ADD COLUMN muted INTEGER NOT NULL DEFAULT 0;
       INSERT INTO migration VALUES(7,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=8")) {
+    db.exec(`BEGIN;
+      CREATE TABLE mcp_connections(id TEXT PRIMARY KEY,url TEXT NOT NULL UNIQUE,server_name TEXT NOT NULL,status TEXT NOT NULL,detail TEXT NOT NULL,protocol_version TEXT NOT NULL,capabilities_json TEXT NOT NULL DEFAULT '[]',auth_metadata_json TEXT NOT NULL DEFAULT '{}',discovered_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+      INSERT INTO migration VALUES(8,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

@@ -15,6 +15,7 @@ This document tracks the product work from the current engineering and messenger
 
 - [ ] Add bounded replanning, project recipes, instruction import, and durable project memory.
 - [x] Add the local integration control plane with credential-aware health, risk, scoped tools, and graceful unavailable states.
+- [x] Discover remote MCP servers using initialization and protected-resource metadata without sending credentials.
 - [ ] Build the engineering integrations in priority order: GitHub, Sentry, Vercel, Playwright, CodeRabbit, Linear, Supabase/Postgres, Slack, and Notion.
 - [ ] Add continuous ownership, proactive monitoring, and fact-based weekly receipts.
 

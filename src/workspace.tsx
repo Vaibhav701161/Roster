@@ -578,7 +578,10 @@ function SettingsView({ state, act, notify }: Props) {
     [key, setKey] = useState(""),
     [saving, setSaving] = useState(false),
     [error, setError] = useState(""),
-    [workspaceName, setWorkspaceName] = useState(state.settings.workspaceName);
+    [workspaceName, setWorkspaceName] = useState(state.settings.workspaceName),
+    [mcpUrl, setMcpUrl] = useState(""),
+    [mcpBusy, setMcpBusy] = useState(false),
+    [mcpError, setMcpError] = useState("");
   const test = async (provider: string) => {
     setTesting(provider);
     setResult("");
@@ -681,6 +684,60 @@ function SettingsView({ state, act, notify }: Props) {
           >
             <RefreshCw size={13} /> Refresh integrations
           </button>
+        </section>
+        <section className="settings-section">
+          <h2>MCP servers</h2>
+          <p>
+            Discover a remote Model Context Protocol server before connecting
+            credentials. Roster does not send tokens during discovery.
+          </p>
+          <form
+            className="setting-row"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setMcpBusy(true);
+              setMcpError("");
+              try {
+                await act(() => api("/mcp/discover", "POST", { url: mcpUrl }));
+                setMcpUrl("");
+                notify("MCP server discovery is complete.");
+              } catch (e) {
+                setMcpError((e as Error).message);
+              } finally {
+                setMcpBusy(false);
+              }
+            }}
+          >
+            <label className="field" style={{ flex: 1, margin: 0 }}>
+              <span className="sr-only">MCP server URL</span>
+              <input
+                aria-label="MCP server URL"
+                type="url"
+                placeholder="https://example.com/mcp"
+                required
+                value={mcpUrl}
+                onChange={(event) => setMcpUrl(event.target.value)}
+              />
+            </label>
+            <button className="secondary" disabled={mcpBusy}>
+              {mcpBusy ? "Discovering…" : "Discover server"}
+            </button>
+          </form>
+          {mcpError && <p className="form-error">{mcpError}</p>}
+          {state.mcpConnections.map((connection) => (
+            <div className="provider-row" key={connection.id}>
+              <span className="provider-logo">
+                <Code2 size={21} />
+              </span>
+              <div>
+                <strong>{connection.server_name}</strong>
+                <small>{connection.detail}</small>
+              </div>
+              <span className="status-pill">
+                {statusLabel[connection.status] || connection.status}
+              </span>
+            </div>
+          ))}
         </section>
         <section className="settings-section">
           <h2>AI connections</h2>
