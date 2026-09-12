@@ -252,6 +252,26 @@ export function TeamModal({
     }),
     [error, setError] = useState(""),
     [saving, setSaving] = useState(false);
+  const recipes = [
+    {
+      name: "Bug response",
+      objective:
+        "Investigate the regression, prepare a focused fix, collect evidence, and request an independent review before handoff.",
+      roles: /engineer|qa|review/i,
+    },
+    {
+      name: "Feature delivery",
+      objective:
+        "Define a complete outcome, implement the smallest reliable change, verify it independently, and prepare a safe integration patch.",
+      roles: /engineer|qa|review|research/i,
+    },
+    {
+      name: "Research brief",
+      objective:
+        "Investigate the question, preserve sources and constraints, then return a concise recommendation with the evidence behind it.",
+      roles: /research|analyst|engineer/i,
+    },
+  ];
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -274,6 +294,31 @@ export function TeamModal({
             A shared conversation, a clear purpose, and the right people for the
             job.
           </p>
+          {!value.id && (
+            <div className="template-select">
+              {recipes.map((recipe) => (
+                <button
+                  key={recipe.name}
+                  type="button"
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      name: recipe.name,
+                      objective: recipe.objective,
+                      members: state.agents
+                        .filter(
+                          (agent) =>
+                            !agent.benched && recipe.roles.test(agent.role),
+                        )
+                        .map((agent) => agent.id),
+                    })
+                  }
+                >
+                  {recipe.name}
+                </button>
+              ))}
+            </div>
+          )}
           <label className="field">
             Team name
             <input
