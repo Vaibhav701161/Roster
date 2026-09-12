@@ -1131,6 +1131,16 @@ select {
 .task-chat-card > svg {
   color: var(--muted);
 }
+.task-receipt-mark {
+  margin-left: auto;
+  color: var(--green-dark);
+  background: var(--green-soft);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
 .task-state-icon {
   width: 33px;
   height: 33px;

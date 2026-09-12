@@ -66,6 +66,9 @@ export type Task = {
   base_commit?: string;
   branch?: string;
   worktree_path?: string;
+  criteria_total?: number;
+  criteria_passed?: number;
+  has_receipt?: number;
 };
 export type Approval = {
   id: string;

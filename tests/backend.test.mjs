@@ -487,6 +487,11 @@ test("coding work receives an isolated worktree with a persisted outcome and tas
       ]).goal,
       task.objective,
     );
+    const taskSummary = (await f.request("/state")).tasks.find(
+      (item) => item.id === task.id,
+    );
+    assert.equal(taskSummary.criteria_total, 2);
+    assert.equal(taskSummary.criteria_passed, 0);
     const inspection = await f.request(`/tasks/${task.id}/inspection`);
     assert.match(inspection.diff, /after/);
     const handoff = await f.request(

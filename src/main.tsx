@@ -1157,11 +1157,19 @@ export function App() {
                                   ?.name
                               }{" "}
                               · {statusLabel[t.status]}
+                              {t.criteria_total
+                                ? ` · ${t.criteria_passed || 0}/${t.criteria_total} checks`
+                                : ""}
                               {t.verification !== "unverified"
                                 ? " · " + statusLabel[t.verification]
                                 : ""}
                             </small>
                           </span>
+                          {t.has_receipt ? (
+                            <span className="task-receipt-mark">
+                              Verified receipt
+                            </span>
+                          ) : null}
                           <ArrowUpRight size={18} />
                         </button>
                       ))}

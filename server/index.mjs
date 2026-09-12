@@ -115,7 +115,7 @@ export async function createServer({
   };
   function snapshot() {
     const tasks = store.all(
-      "SELECT id,conversation_id,message_id,owner_id,title,status,kind,workspace,error,verification,created_at,started_at,completed_at,'' result,'' objective,root_task_id,repository,base_commit,branch,worktree_path FROM tasks ORDER BY CASE WHEN status IN ('running','waiting_approval','queued','waiting_dependency') THEN 0 ELSE 1 END,created_at DESC LIMIT 500",
+      "SELECT id,conversation_id,message_id,owner_id,title,status,kind,workspace,error,verification,created_at,started_at,completed_at,'' result,'' objective,root_task_id,repository,base_commit,branch,worktree_path,(SELECT COUNT(*) FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=tasks.id) criteria_total,(SELECT COUNT(*) FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=tasks.id AND c.status='pass') criteria_passed,EXISTS(SELECT 1 FROM work_receipts r WHERE r.task_id=tasks.id) has_receipt FROM tasks ORDER BY CASE WHEN status IN ('running','waiting_approval','queued','waiting_dependency') THEN 0 ELSE 1 END,created_at DESC LIMIT 500",
     );
     const agents = store
       .all("SELECT * FROM agents ORDER BY created_at")
