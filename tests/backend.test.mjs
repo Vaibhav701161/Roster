@@ -804,6 +804,15 @@ test("GitHub pull request ownership persists actionable CI and review state", as
     githubClient: {
       repositoryFromWorkspace: async () => "owner/project",
       inspectPullRequest: async () => pullRequest,
+      createPullRequest: async (task, body) => {
+        assert.equal(task.id.length, 36);
+        assert.match(body.title, /GitHub ownership fixture/);
+        return {
+          repository: "owner/project",
+          number: 482,
+          url: "https://github.com/owner/project/pull/482",
+        };
+      },
     },
   });
   try {
@@ -818,6 +827,15 @@ test("GitHub pull request ownership persists actionable CI and review state", as
     const task = await until(() =>
       f.app.store.one("SELECT * FROM tasks WHERE status='completed'"),
     );
+    const published = await f.request(
+      `/tasks/${task.id}/github-pull-request/create`,
+      "POST",
+      {
+        title: "GitHub ownership fixture",
+        body: "Prepared in Roster's isolated task worktree.",
+      },
+    );
+    assert.equal(published.pullRequest.number, 482);
     const monitored = await f.request(
       `/tasks/${task.id}/github-pull-request`,
       "POST",

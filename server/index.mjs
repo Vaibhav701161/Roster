@@ -20,7 +20,7 @@ import {
   discoverLocalMcp,
   discoverMcp,
 } from "./mcp.mjs";
-import { createGithubOwnership } from "./github.mjs";
+import { createGithubOwnership, createGithubPullRequest } from "./github.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
 const short = z.string().trim().min(1).max(100);
@@ -229,6 +229,27 @@ export async function createServer({
     const ownership = await githubOwnership.refresh(req.params.id);
     changed();
     res.json(ownership);
+  });
+  app.post("/api/tasks/:id/github-pull-request/create", async (req, res) => {
+    const task = must("tasks", req.params.id);
+    if (task.status !== "completed")
+      throw new Error("Complete the task before opening a pull request.");
+    const body = z
+      .object({
+        title: z.string().trim().min(3).max(240).default(task.title),
+        body: z.string().trim().min(3).max(10000),
+      })
+      .parse(req.body);
+    const publish = githubClient?.createPullRequest || createGithubPullRequest;
+    const pullRequest = await publish(task, body);
+    const ownership = await githubOwnership.track(task, pullRequest.number);
+    engine.event(
+      task.id,
+      "github.pull_request_created",
+      `Published task branch and opened ${pullRequest.url}.`,
+    );
+    changed();
+    res.json({ pullRequest, ownership });
   });
   app.post("/api/mcp/discover", async (req, res) => {
     const { url } = z

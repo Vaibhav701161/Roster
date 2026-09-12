@@ -116,6 +116,90 @@ async function inspectPullRequest({ repository, number }) {
   }
 }
 
+async function git(args, cwd) {
+  try {
+    return await exec("git", args, {
+      cwd,
+      windowsHide: true,
+      timeout: 30000,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch (error) {
+    throw new Error(
+      `Git could not prepare this pull request: ${String(error?.stderr || error?.message || error).slice(0, 500)}`,
+    );
+  }
+}
+
+async function defaultBaseBranch(worktree) {
+  try {
+    const { stdout } = await git(
+      ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      worktree,
+    );
+    return stdout.trim().replace(/^origin\//, "") || "main";
+  } catch {
+    return "main";
+  }
+}
+
+export async function createGithubPullRequest(task, { title, body }) {
+  if (!task.worktree_path || !task.branch)
+    throw new Error(
+      "This task does not have an isolated Git branch to publish.",
+    );
+  const worktree = task.worktree_path;
+  const { stdout: remote } = await git(
+    ["config", "--get", "remote.origin.url"],
+    worktree,
+  );
+  const repository = githubRepository(remote);
+  if (!repository)
+    throw new Error(
+      "This task's project does not have a GitHub origin remote.",
+    );
+  await git(["diff", "--check"], worktree);
+  const { stdout: changed } = await git(["status", "--porcelain"], worktree);
+  if (changed.trim()) {
+    await git(["add", "--all"], worktree);
+    await git(["commit", "-m", `Roster: ${title}`.slice(0, 240)], worktree);
+  }
+  const base = await defaultBaseBranch(worktree);
+  await git(["push", "--set-upstream", "origin", task.branch], worktree);
+  try {
+    const { stdout } = await exec(
+      "gh",
+      [
+        "pr",
+        "create",
+        "--repo",
+        repository,
+        "--head",
+        task.branch,
+        "--base",
+        base,
+        "--title",
+        title,
+        "--body",
+        body,
+      ],
+      { windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 },
+    );
+    const url = stdout.match(/https:\/\/github\.com\/[^\s]+\/pull\/(\d+)/i);
+    if (!url) throw new Error("GitHub did not return a pull request URL.");
+    return { repository, number: Number(url[1]), url: url[0] };
+  } catch (error) {
+    const detail = String(error?.stderr || error?.message || error);
+    if (/not logged|auth login|authenticate/i.test(detail))
+      throw new Error(
+        "GitHub CLI authentication is required to open a pull request.",
+      );
+    throw new Error(
+      `GitHub could not open the pull request: ${detail.slice(0, 500)}`,
+    );
+  }
+}
+
 export function createGithubOwnership(store, event, client = {}) {
   const resolveRepository =
     client.repositoryFromWorkspace || repositoryFromWorkspace;

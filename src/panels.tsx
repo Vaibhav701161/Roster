@@ -860,6 +860,28 @@ export function TaskPanel({
                     <strong>{ownership.detail}</strong>
                   </div>
                 ))}
+                {task.status === "completed" && task.worktree_path && (
+                  <button
+                    className="primary"
+                    onClick={async () => {
+                      if (
+                        !window.confirm(
+                          "Roster will commit the task worktree if needed, push its branch to origin, and open a GitHub pull request. Continue?",
+                        )
+                      )
+                        return;
+                      await act(() =>
+                        api(`/tasks/${id}/github-pull-request/create`, "POST", {
+                          title: task.title,
+                          body: "Prepared in Roster's isolated task worktree. Review the linked Roster evidence before merging.",
+                        }),
+                      );
+                      setDetail(await api<TaskDetail>(`/tasks/${id}`));
+                    }}
+                  >
+                    Publish branch and open pull request
+                  </button>
+                )}
                 {trackingPullRequest ? (
                   <form
                     onSubmit={async (event) => {
