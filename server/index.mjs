@@ -13,6 +13,7 @@ import { createVault, providerKey } from "./vault.mjs";
 import { acquireLock } from "./lock.mjs";
 import { taskInspection } from "./worktree.mjs";
 import { refreshIntegrations } from "./integrations.mjs";
+import { inspectProject } from "./projects.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
 const short = z.string().trim().min(1).max(100);
@@ -160,6 +161,13 @@ export async function createServer({
     };
   }
   app.get("/api/state", (req, res) => res.json(snapshot()));
+  app.post("/api/projects/inspect", (req, res) => {
+    const target = workspace(
+      z.object({ workspace: z.string().max(1000) }).parse(req.body).workspace,
+    );
+    if (!target) throw new Error("Choose a project folder first.");
+    res.json(inspectProject(target));
+  });
   app.post("/api/integrations/refresh", async (req, res) => {
     const integrations = await refreshIntegrations(store);
     changed();

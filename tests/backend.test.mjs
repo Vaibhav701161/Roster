@@ -680,6 +680,30 @@ test("integration refresh persists scoped engineering tool status without creden
   }
 });
 
+test("project inspection discovers local scripts and instruction files", async () => {
+  const workspace = fs.mkdtempSync(
+    path.join(os.tmpdir(), "roster-project-test-"),
+  );
+  fs.writeFileSync(
+    path.join(workspace, "package.json"),
+    JSON.stringify({
+      name: "sample",
+      scripts: { test: "node --test", build: "vite build" },
+    }),
+  );
+  fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}");
+  fs.writeFileSync(path.join(workspace, "AGENTS.md"), "Use focused tests.");
+  const f = await fixture(async () => ({ text: "unused" }));
+  try {
+    const project = await f.request("/projects/inspect", "POST", { workspace });
+    assert.equal(project.name, "sample");
+    assert.equal(project.instructions[0].name, "AGENTS.md");
+    assert.equal(project.scripts.length, 2);
+  } finally {
+    await f.app.close();
+  }
+});
+
 test(
   "Windows secret persistence uses DPAPI and does not store the cleartext key",
   { skip: process.platform !== "win32" },
