@@ -125,16 +125,38 @@ export function Avatar({
   team = false,
   size = "",
   status,
+  members = [],
 }: {
   name: string;
   color?: string;
   team?: boolean;
   size?: string;
   status?: string;
+  members?: { name: string; color?: string; status?: string }[];
 }) {
+  const people = members.slice(0, 4);
   return (
-    <span className={`avatar ${color} ${size}`}>
-      {team ? (
+    <span
+      className={`avatar ${color} ${size} ${people.length ? "composite" : ""}`}
+    >
+      {people.length ? (
+        <span className="avatar-stack" aria-label={`${name} team members`}>
+          {people.map((member) => (
+            <i
+              className={`avatar-mini ${member.color || "green"}`}
+              key={member.name}
+              title={member.name}
+            >
+              {member.name
+                .split(" ")
+                .map((part) => part[0])
+                .slice(0, 2)
+                .join("")
+                .toUpperCase()}
+            </i>
+          ))}
+        </span>
+      ) : team ? (
         <Users size={size === "large" ? 34 : 21} />
       ) : (
         name
@@ -682,6 +704,21 @@ export function App() {
               <div className="conversation-rows">
                 {conversations.map((c) => {
                   const a = state.agents.find((a) => a.id === c.agent_id);
+                  const team = state.teams.find(
+                    (team) => team.id === c.team_id,
+                  );
+                  const teamMembers = team
+                    ? team.members
+                        .map((memberId) =>
+                          state.agents.find((member) => member.id === memberId),
+                        )
+                        .filter(Boolean)
+                        .map((member) => ({
+                          name: member!.name,
+                          color: member!.color,
+                          status: member!.status,
+                        }))
+                    : [];
                   const working = state.tasks.some(
                     (t) => t.conversation_id === c.id && t.status === "running",
                   );
@@ -696,6 +733,7 @@ export function App() {
                         color={a?.color || "green"}
                         team={!!c.team_id}
                         status={working ? "working" : undefined}
+                        members={teamMembers}
                       />
                       <span className="conversation-text">
                         <span className="conversation-title">
@@ -785,12 +823,41 @@ export function App() {
                         name={conv.name}
                         color={agent?.color || "green"}
                         team={!!currentTeam}
+                        members={
+                          currentTeam
+                            ? currentTeam.members
+                                .map((memberId) =>
+                                  state.agents.find(
+                                    (member) => member.id === memberId,
+                                  ),
+                                )
+                                .filter(Boolean)
+                                .map((member) => ({
+                                  name: member!.name,
+                                  color: member!.color,
+                                  status: member!.status,
+                                }))
+                            : []
+                        }
                       />
                       <span>
                         <strong>{conv.name}</strong>
                         <small>
                           {currentTeam
-                            ? `${currentTeam.members.length} workers · ${busy ? "Working together" : "Team chat"}`
+                            ? currentTeam.members
+                                .map((memberId) =>
+                                  state.agents.find(
+                                    (member) => member.id === memberId,
+                                  ),
+                                )
+                                .filter(Boolean)
+                                .map(
+                                  (member) =>
+                                    `${member!.name} ${
+                                      statusLabel[member!.status]
+                                    }`,
+                                )
+                                .join(" · ")
                             : `${agent?.role || "Removed worker"} · ${busy ? "Working" : agent ? statusLabel[agent.status] : "History preserved"}`}
                         </small>
                       </span>
@@ -904,6 +971,22 @@ export function App() {
                           color={agent?.color}
                           team={!!currentTeam}
                           size="large"
+                          members={
+                            currentTeam
+                              ? currentTeam.members
+                                  .map((memberId) =>
+                                    state.agents.find(
+                                      (member) => member.id === memberId,
+                                    ),
+                                  )
+                                  .filter(Boolean)
+                                  .map((member) => ({
+                                    name: member!.name,
+                                    color: member!.color,
+                                    status: member!.status,
+                                  }))
+                              : []
+                          }
                         />
                         <h2>Say hello to {conv.name}.</h2>
                         <p>

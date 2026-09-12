@@ -543,6 +543,20 @@ export function ProfilePanel({
           color={agent?.color}
           team={!!team}
           size="large"
+          members={
+            team
+              ? team.members
+                  .map((memberId) =>
+                    state.agents.find((member) => member.id === memberId),
+                  )
+                  .filter(Boolean)
+                  .map((member) => ({
+                    name: member!.name,
+                    color: member!.color,
+                    status: member!.status,
+                  }))
+              : []
+          }
         />
         <h2>{entity.name}</h2>
         <p>{agent?.role || `${team?.members.length} workers`}</p>

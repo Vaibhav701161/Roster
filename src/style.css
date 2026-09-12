@@ -393,6 +393,46 @@ select {
   background: #d9ecd7;
   color: #4b784b;
 }
+.avatar.composite {
+  background: #e7eee3;
+  overflow: hidden;
+}
+.avatar-stack {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  width: 100%;
+  height: 100%;
+  gap: 1px;
+  background: var(--bg);
+}
+.avatar-mini {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  color: #fff;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+}
+.avatar-mini.green {
+  background: #287a57;
+}
+.avatar-mini.blue {
+  background: #3e7397;
+}
+.avatar-mini.peach {
+  background: #bd7659;
+}
+.avatar-mini.purple {
+  background: #735d94;
+}
+.avatar-mini.gold {
+  background: #9b782c;
+}
+.avatar.large .avatar-mini {
+  font-size: 11px;
+}
 .avatar.blue,
 .template-icon.blue {
   background: #e0edf4;
