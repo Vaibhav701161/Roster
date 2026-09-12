@@ -569,7 +569,9 @@ export function TaskPanel({
     [evidence, setEvidence] = useState(""),
     [verifying, setVerifying] = useState(false),
     [criterion, setCriterion] = useState(""),
-    [criterionType, setCriterionType] = useState("manual");
+    [criterionType, setCriterionType] = useState("manual"),
+    [recordingCriterion, setRecordingCriterion] = useState<string | null>(null),
+    [criterionEvidence, setCriterionEvidence] = useState("");
   const task =
     detail?.task.id === id ? detail.task : state.tasks.find((t) => t.id === id);
   useEffect(() => {
@@ -681,8 +683,47 @@ export function TaskPanel({
                     {criterion.status === "pass" ? "Checked" : "Pending"}
                   </span>
                   <strong>{criterion.description}</strong>
+                  {criterion.status === "pending" && (
+                    <button
+                      className="text-button"
+                      onClick={() => setRecordingCriterion(criterion.id)}
+                    >
+                      Record
+                    </button>
+                  )}
                 </div>
               ))}
+              {recordingCriterion && (
+                <form
+                  onSubmit={async (event) => {
+                    event.preventDefault();
+                    await act(() =>
+                      api(`/criteria/${recordingCriterion}/record`, "POST", {
+                        status: "pass",
+                        evidence: criterionEvidence,
+                      }),
+                    );
+                    setRecordingCriterion(null);
+                    setCriterionEvidence("");
+                    setDetail(await api<TaskDetail>(`/tasks/${id}`));
+                  }}
+                >
+                  <label className="field">
+                    What supports this check?
+                    <textarea
+                      required
+                      minLength={3}
+                      maxLength={3000}
+                      value={criterionEvidence}
+                      onChange={(event) =>
+                        setCriterionEvidence(event.target.value)
+                      }
+                      placeholder="For example, npm test completed successfully"
+                    />
+                  </label>
+                  <button className="primary">Record passed check</button>
+                </form>
+              )}
               <form
                 onSubmit={async (event) => {
                   event.preventDefault();

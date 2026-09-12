@@ -789,6 +789,46 @@ test("users can add an explicit outcome acceptance criterion", async () => {
   }
 });
 
+test("criterion evidence is retained as outcome evidence", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    await f.request(`/conversations/${a.conversationId}/messages`, "POST", {
+      content: "Fix the sample issue.",
+    });
+    const task = await until(() =>
+      f.app.store.one("SELECT * FROM tasks WHERE status='completed'"),
+    );
+    const outcome = f.app.store.one(
+      "SELECT * FROM outcome_contracts WHERE task_id=?",
+      [task.id],
+    );
+    const criterion = f.app.store.one(
+      "SELECT * FROM acceptance_criteria WHERE outcome_id=?",
+      [outcome.id],
+    );
+    await f.request(`/criteria/${criterion.id}/record`, "POST", {
+      status: "pass",
+      evidence: "The focused test completed successfully.",
+    });
+    assert.equal(
+      f.app.store.one("SELECT status FROM acceptance_criteria WHERE id=?", [
+        criterion.id,
+      ]).status,
+      "pass",
+    );
+    assert.equal(
+      f.app.store.one(
+        "SELECT COUNT(*) count FROM evidence WHERE outcome_id=?",
+        [outcome.id],
+      ).count,
+      2,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
 test(
   "Windows secret persistence uses DPAPI and does not store the cleartext key",
   { skip: process.platform !== "win32" },

@@ -533,6 +533,42 @@ export async function createServer({
     changed();
     res.json({ ok: true });
   });
+  app.post("/api/criteria/:id/record", (req, res) => {
+    const criterion = must("acceptance_criteria", req.params.id);
+    const body = z
+      .object({
+        status: z.enum(["pass", "fail"]),
+        evidence: z.string().trim().min(3).max(3000),
+      })
+      .parse(req.body);
+    const outcome = must("outcome_contracts", criterion.outcome_id);
+    const evidenceId = id();
+    store.transaction(() => {
+      store.run(
+        "INSERT INTO evidence(id,task_id,outcome_id,type,source,status,summary,created_at) VALUES(?,?,?,?,?,?,?,?)",
+        [
+          evidenceId,
+          outcome.task_id,
+          outcome.id,
+          criterion.type,
+          "user",
+          body.status,
+          body.evidence,
+          now(),
+        ],
+      );
+      store.run(
+        "UPDATE acceptance_criteria SET status=?,evidence_id=?,updated_at=? WHERE id=?",
+        [body.status, evidenceId, now(), criterion.id],
+      );
+      store.run("UPDATE outcome_contracts SET updated_at=? WHERE id=?", [
+        now(),
+        outcome.id,
+      ]);
+    });
+    changed();
+    res.json({ ok: true });
+  });
   app.post("/api/approvals/:id", (req, res) => {
     const { allow } = z.object({ allow: z.boolean() }).parse(req.body);
     engine.resolveApproval(req.params.id, allow);
