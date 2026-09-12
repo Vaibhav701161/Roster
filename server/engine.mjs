@@ -24,6 +24,7 @@ import {
   taskRequirements,
 } from "./capabilities.mjs";
 import { isGitWorkspace, provisionWorktree } from "./worktree.mjs";
+import { projectProfileMemory } from "./projects.mjs";
 const assignment = z.object({
   agent_id: z.string(),
   objective: z.string().min(1).max(8000),
@@ -607,10 +608,24 @@ export function createEngine(
       const team = conv.team_id
         ? store.one("SELECT * FROM teams WHERE id=?", [conv.team_id])
         : null;
-      const memory = store.all(
+      const savedMemory = store.all(
         "SELECT content FROM memories WHERE scope_id IN (?,?)",
         [agent.id, team?.id || ""],
       );
+      const profile = task.workspace
+        ? store.one("SELECT * FROM project_profiles WHERE workspace=?", [
+            task.workspace,
+          ])
+        : null;
+      const memory = profile
+        ? [
+            ...savedMemory,
+            {
+              content: projectProfileMemory(profile),
+              source: "project_profile",
+            },
+          ]
+        : savedMemory;
       const deps = store.all(
         "SELECT t.id,t.title,t.result FROM tasks t JOIN task_dependencies d ON t.id=d.depends_on WHERE d.task_id=?",
         [task.id],

@@ -104,6 +104,7 @@ export type State = {
   providers: Provider[];
   integrations: Integration[];
   mcpConnections: McpConnection[];
+  projectProfiles: ProjectProfile[];
   planning: string[];
   settings: Settings;
 };
@@ -125,6 +126,12 @@ export type McpConnection = {
   detail: string;
   protocol_version: string;
   capabilities_json: string;
+  updated_at: string;
+};
+export type ProjectProfile = {
+  id: string;
+  workspace: string;
+  name: string;
   updated_at: string;
 };
 export type AttentionItem = {

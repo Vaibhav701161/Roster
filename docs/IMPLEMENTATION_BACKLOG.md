@@ -13,7 +13,8 @@ This document tracks the product work from the current engineering and messenger
 
 ## Next
 
-- [ ] Add bounded replanning, project recipes, instruction import, and durable project memory.
+- [ ] Add bounded replanning and project recipes.
+- [x] Support explicit instruction import and durable, bounded project profiles.
 - [x] Add the local integration control plane with credential-aware health, risk, scoped tools, and graceful unavailable states.
 - [x] Discover remote MCP servers using initialization and protected-resource metadata without sending credentials.
 - [ ] Build the engineering integrations in priority order: GitHub, Sentry, Vercel, Playwright, CodeRabbit, Linear, Supabase/Postgres, Slack, and Notion.

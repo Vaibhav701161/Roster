@@ -72,6 +72,8 @@ Roster maintains a local registry for GitHub, Playwright, Sentry, Vercel, CodeRa
 
 MCP servers can be discovered from Settings. Discovery records the server's capabilities and protected-resource authorization metadata without sending credentials. Remote endpoints must use HTTPS; loopback HTTP is supported for local development. OAuth authorization and tool execution are intentionally not enabled by discovery alone.
 
+When a worker is attached to a project, it can inspect the local package scripts and project instruction files. You can explicitly save that inspection as a project profile, so later tasks in the same folder receive the relevant checks and instructions without relying on hidden context.
+
 ## How it works
 
 ```mermaid

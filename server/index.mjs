@@ -13,7 +13,7 @@ import { createVault, providerKey } from "./vault.mjs";
 import { acquireLock } from "./lock.mjs";
 import { taskInspection } from "./worktree.mjs";
 import { refreshIntegrations } from "./integrations.mjs";
-import { inspectProject } from "./projects.mjs";
+import { inspectProject, saveProjectProfile } from "./projects.mjs";
 import { discoverMcp } from "./mcp.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
@@ -149,6 +149,9 @@ export async function createServer({
       mcpConnections: store.all(
         "SELECT * FROM mcp_connections ORDER BY updated_at DESC",
       ),
+      projectProfiles: store.all(
+        "SELECT id,workspace,name,updated_at FROM project_profiles ORDER BY updated_at DESC",
+      ),
       providers: engine.health,
       planning: [...engine.planning.keys()],
       settings: {
@@ -171,6 +174,15 @@ export async function createServer({
     );
     if (!target) throw new Error("Choose a project folder first.");
     res.json(inspectProject(target));
+  });
+  app.post("/api/projects/profile", (req, res) => {
+    const target = workspace(
+      z.object({ workspace: z.string().max(1000) }).parse(req.body).workspace,
+    );
+    if (!target) throw new Error("Choose a project folder first.");
+    const profile = saveProjectProfile(store, target);
+    changed();
+    res.json(profile);
   });
   app.post("/api/integrations/refresh", async (req, res) => {
     const integrations = await refreshIntegrations(store);

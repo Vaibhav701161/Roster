@@ -778,6 +778,39 @@ test("project inspection discovers local scripts and instruction files", async (
   }
 });
 
+test("an explicitly saved project profile supplies bounded instructions to later work", async () => {
+  const workspace = fs.mkdtempSync(
+    path.join(os.tmpdir(), "roster-profile-test-"),
+  );
+  fs.writeFileSync(
+    path.join(workspace, "package.json"),
+    JSON.stringify({ name: "profiled-app", scripts: { test: "node --test" } }),
+  );
+  fs.writeFileSync(path.join(workspace, "AGENTS.md"), "Run the focused test.");
+  let prompt = "";
+  const f = await fixture(async (options) => {
+    prompt = options.prompt;
+    return { text: "Completed the requested work." };
+  });
+  try {
+    const profile = await f.request("/projects/profile", "POST", { workspace });
+    assert.equal(profile.name, "profiled-app");
+    const a = await f.request("/agents", "POST", worker("Alex", { workspace }));
+    await f.request(`/conversations/${a.conversationId}/messages`, "POST", {
+      content: "Implement the requested change.",
+    });
+    await until(
+      () =>
+        f.app.store.one("SELECT status FROM tasks ORDER BY rowid DESC")
+          ?.status === "completed",
+    );
+    assert.match(prompt, /Project profile: profiled-app/);
+    assert.match(prompt, /Run the focused test/);
+  } finally {
+    await f.app.close();
+  }
+});
+
 test("message reactions are local, durable, and toggleable", async () => {
   const f = await fixture(async () => ({ text: "response" }));
   try {

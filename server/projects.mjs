@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { id, now } from "./store.mjs";
 
 const instructionNames = [
   "AGENTS.md",
@@ -46,4 +47,44 @@ export function inspectProject(workspace) {
           `${packageManager?.startsWith("pnpm") ? "pnpm" : "npm run"} ${script.name}`,
       ),
   };
+}
+
+export function saveProjectProfile(store, workspace) {
+  const project = inspectProject(workspace);
+  const profile = {
+    workspace,
+    name: project.name,
+    suggestions: project.suggestions.slice(0, 20),
+    instructions: project.instructions.map((file) => ({
+      name: file.name,
+      content: file.content.slice(0, 12000),
+    })),
+  };
+  store.run(
+    "INSERT INTO project_profiles(id,workspace,name,suggestions_json,instructions_json,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(workspace) DO UPDATE SET name=excluded.name,suggestions_json=excluded.suggestions_json,instructions_json=excluded.instructions_json,updated_at=excluded.updated_at",
+    [
+      id(),
+      profile.workspace,
+      profile.name,
+      JSON.stringify(profile.suggestions),
+      JSON.stringify(profile.instructions),
+      now(),
+    ],
+  );
+  return profile;
+}
+
+export function projectProfileMemory(profile) {
+  const suggestions = JSON.parse(profile.suggestions_json || "[]");
+  const instructions = JSON.parse(profile.instructions_json || "[]");
+  return [
+    `Project profile: ${profile.name}`,
+    suggestions.length ? `Suggested checks: ${suggestions.join(", ")}` : "",
+    instructions.length
+      ? `Project instructions:\n${instructions.map((file) => `# ${file.name}\n${file.content}`).join("\n\n")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 24000);
 }

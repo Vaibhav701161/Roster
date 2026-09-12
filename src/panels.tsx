@@ -61,7 +61,8 @@ export function WorkerModal({
       instructions: { name: string; content: string }[];
       suggestions: string[];
     } | null>(null),
-    [inspecting, setInspecting] = useState(false);
+    [inspecting, setInspecting] = useState(false),
+    [profileSaved, setProfileSaved] = useState(false);
   const change = (key: string, value: unknown) =>
     setForm((f) => ({ ...f, [key]: value }));
   const save = async (e: React.FormEvent) => {
@@ -228,6 +229,25 @@ export function WorkerModal({
                   {project.instructions.length === 1 ? "" : "s"}
                 </button>
               )}
+              <button
+                type="button"
+                className="text-button"
+                disabled={profileSaved}
+                onClick={async () => {
+                  try {
+                    await api("/projects/profile", "POST", {
+                      workspace: form.workspace,
+                    });
+                    setProfileSaved(true);
+                  } catch (error) {
+                    setError((error as Error).message);
+                  }
+                }}
+              >
+                {profileSaved
+                  ? "Project profile saved"
+                  : "Save project profile"}
+              </button>
             </div>
           )}
           <details className="advanced">
