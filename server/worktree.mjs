@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -76,4 +77,50 @@ export async function taskInspection(task) {
     diff: diff.slice(0, 500000),
     truncated: diff.length > 500000,
   };
+}
+
+export async function integrationCheck(task, patch) {
+  const repository = task.repository || task.workspace;
+  if (!repository || !isGitWorkspace(repository))
+    return {
+      status: "unavailable",
+      detail:
+        "This task does not have a Git checkout to check for integration conflicts.",
+    };
+  const { stdout: status } = await git(["status", "--porcelain"], repository);
+  const userChanges = status
+    .split("\n")
+    .filter(Boolean)
+    .filter(
+      (line) => !line.slice(3).replace(/\\/g, "/").startsWith(".roster/"),
+    );
+  if (userChanges.length)
+    return {
+      status: "blocked",
+      detail:
+        "Your checkout has uncommitted changes. Review or commit them before checking this task patch.",
+    };
+  const directory = fs.mkdtempSync(
+    path.join(os.tmpdir(), "roster-integration-"),
+  );
+  const patchFile = path.join(directory, "task.patch");
+  try {
+    fs.writeFileSync(patchFile, patch, "utf8");
+    await git(
+      ["apply", "--check", "--whitespace=nowarn", patchFile],
+      repository,
+    );
+    return {
+      status: "ready",
+      detail: "The task patch applies cleanly to the current checkout.",
+    };
+  } catch (error) {
+    return {
+      status: "conflict",
+      detail:
+        `The task patch does not apply cleanly to the current checkout. ${String(error.stderr || error.message || "")}`.trim(),
+    };
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 }

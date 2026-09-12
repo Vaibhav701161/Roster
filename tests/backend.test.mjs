@@ -470,11 +470,28 @@ test("coding work receives an isolated worktree with a persisted outcome and tas
       ]).content,
       /after/,
     );
+    assert.equal(handoff.integration.status, "ready");
     assert.equal(
       f.app.store.one("SELECT type FROM attention_items WHERE task_id=?", [
         task.id,
       ]).type,
       "integration",
+    );
+    fs.writeFileSync(path.join(workspace, "example.txt"), "user update\n");
+    execFileSync("git", ["add", "example.txt"], { cwd: workspace });
+    execFileSync("git", ["commit", "-m", "user change"], { cwd: workspace });
+    const conflicting = await f.request(
+      `/tasks/${task.id}/integration-ready`,
+      "POST",
+      {},
+    );
+    assert.equal(conflicting.integration.status, "conflict");
+    assert.equal(
+      f.app.store.one(
+        "SELECT type FROM attention_items WHERE task_id=? ORDER BY rowid DESC",
+        [task.id],
+      ).type,
+      "integration_conflict",
     );
   } finally {
     await f.app.close();

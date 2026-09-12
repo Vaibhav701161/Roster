@@ -11,7 +11,7 @@ import { createEngine } from "./engine.mjs";
 import { cleanError } from "./runtime.mjs";
 import { createVault, providerKey } from "./vault.mjs";
 import { acquireLock } from "./lock.mjs";
-import { taskInspection } from "./worktree.mjs";
+import { integrationCheck, taskInspection } from "./worktree.mjs";
 import { refreshIntegrations } from "./integrations.mjs";
 import { inspectProject, saveProjectProfile } from "./projects.mjs";
 import { discoverMcp } from "./mcp.mjs";
@@ -547,6 +547,7 @@ export async function createServer({
     const inspection = await taskInspection(task);
     if (!inspection.available || !inspection.diff)
       throw new Error("No task-scoped Git change is ready to hand off.");
+    const integration = await integrationCheck(task, inspection.diff);
     const artifactId = id();
     const filename = `${task.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, "").slice(0, 70) || "Roster work"}.patch`;
     store.transaction(() => {
@@ -564,20 +565,22 @@ export async function createServer({
         [
           id(),
           task.id,
-          "integration",
-          "Work is ready to integrate",
-          "Review the task-scoped patch before applying it to your checkout.",
-          JSON.stringify({ artifactId }),
+          integration.status === "ready"
+            ? "integration"
+            : "integration_conflict",
+          integration.status === "ready"
+            ? "Work is ready to integrate"
+            : "Work needs integration help",
+          integration.status === "ready"
+            ? "The task-scoped patch applies cleanly. Review it before applying it to your checkout."
+            : integration.detail,
+          JSON.stringify({ artifactId, integration }),
           now(),
         ],
       );
     });
-    engine.event(
-      task.id,
-      "integration.ready",
-      "Created a task-scoped patch for safe review.",
-    );
-    res.json({ artifactId });
+    engine.event(task.id, "integration.ready", integration.detail);
+    res.json({ artifactId, integration });
   });
   app.post("/api/tasks/:id/verify", (req, res) => {
     const t = must("tasks", req.params.id);
