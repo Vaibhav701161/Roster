@@ -638,6 +638,27 @@ function SettingsView({ state, act, notify }: Props) {
               ))}
             </div>
           </div>
+          <div className="setting-row">
+            <div>
+              <strong>Chat background</strong>
+              <small>Choose a quiet backdrop for conversations.</small>
+            </div>
+            <div className="theme-picker">
+              {["classic", "paper", "plain"].map((wallpaper) => (
+                <button
+                  key={wallpaper}
+                  className={
+                    state.settings.wallpaper === wallpaper ? "selected" : ""
+                  }
+                  onClick={() =>
+                    act(() => api("/settings", "POST", { wallpaper }))
+                  }
+                >
+                  {wallpaper[0].toUpperCase() + wallpaper.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
           <form
             className="setting-row"
             onSubmit={(e) => {

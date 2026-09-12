@@ -88,6 +88,7 @@ export type Provider = {
 };
 export type Settings = {
   theme: string;
+  wallpaper: "classic" | "paper" | "plain";
   parallelLimit: number;
   repairLimit: number;
   compatible: { name: string; endpoint: string; model: string } | null;

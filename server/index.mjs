@@ -166,6 +166,7 @@ export async function createServer({
       planning: [...engine.planning.keys()],
       settings: {
         theme: store.setting("theme", "light"),
+        wallpaper: store.setting("wallpaper", "classic"),
         parallelLimit: store.setting("parallelLimit", 2),
         repairLimit: store.setting("repairLimit", 3),
         compatible: store.setting("compatible"),
@@ -799,6 +800,7 @@ export async function createServer({
     const b = z
       .object({
         theme: z.enum(["light", "dark", "system"]).optional(),
+        wallpaper: z.enum(["classic", "paper", "plain"]).optional(),
         parallelLimit: z.number().int().min(1).max(4).optional(),
         repairLimit: z.number().int().min(1).max(5).optional(),
         workspaceName: short.optional(),

@@ -934,7 +934,7 @@ export function App() {
                     )}
                   </header>
                   <div
-                    className="message-scroll wallpaper"
+                    className={`message-scroll wallpaper ${state.settings.wallpaper}`}
                     ref={scroll}
                     onScroll={() => {
                       const e = scroll.current;

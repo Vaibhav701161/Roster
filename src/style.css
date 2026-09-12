@@ -621,6 +621,15 @@ select {
   background-color: var(--paper);
   background-image: url("data:image/svg+xml,%3Csvg width='180' height='150' viewBox='0 0 180 150' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' stroke='%23849b77' stroke-width='.75' opacity='.09'%3E%3Cpath d='M23 26h19v14H29l-6 4zM91 106l7-11 7 11-7 11zM139 28l9 4-3 8-9-4zM44 110q6-10 13 0t13 0M110 62l4-4m-4 0 4 4M155 120h8m-4-4v8'/%3E%3Ccircle cx='73' cy='49' r='3'/%3E%3Ccircle cx='18' cy='78' r='1'/%3E%3Cpath d='M155 69q9 8 0 16M83 18l4-5 4 5M24 139l7-3 4 7M116 137h9v5h-9z'/%3E%3C/g%3E%3C/svg%3E");
 }
+.wallpaper.paper {
+  background-color: #f5f3ea;
+  background-image: linear-gradient(#d8d2c222 1px, transparent 1px);
+  background-size: 100% 28px;
+}
+.wallpaper.plain {
+  background-color: var(--paper);
+  background-image: none;
+}
 .welcome {
   display: flex;
   flex-direction: column;

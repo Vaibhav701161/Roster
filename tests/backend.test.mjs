@@ -133,6 +133,16 @@ test("worker avatars stay local and accept only bounded image data", async () =>
   }
 });
 
+test("chat background preference persists locally", async () => {
+  const f = await fixture(async () => ({ text: "unused" }));
+  try {
+    await f.request("/settings", "POST", { wallpaper: "paper" });
+    assert.equal((await f.request("/state")).settings.wallpaper, "paper");
+  } finally {
+    await f.app.close();
+  }
+});
+
 test("team routing, dependency outputs, approval pause/resume, explicit mentions and bench exclusion", async () => {
   let members = [],
     calls = [],
