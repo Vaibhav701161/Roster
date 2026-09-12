@@ -917,6 +917,20 @@ test("MCP discovery records public capabilities and authorization metadata witho
           }),
         );
       }
+      if (req.url === "/public" && request.method === "tools/call") {
+        assert.equal(request.params.name, "issues.read");
+        assert.deepEqual(request.params.arguments, { issue: 42 });
+        res.setHeader("Content-Type", "application/json");
+        return res.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: "roster-tool-call",
+            result: {
+              content: [{ type: "text", text: "Issue 42 is open." }],
+            },
+          }),
+        );
+      }
       res.writeHead(404).end();
     });
   });
@@ -945,9 +959,73 @@ test("MCP discovery records public capabilities and authorization metadata witho
       )[0].name,
       "issues.read",
     );
+    const toolCall = await f.request(
+      `/mcp/${publicServer.id}/tools/call`,
+      "POST",
+      { name: "issues.read", arguments: { issue: 42 } },
+    );
+    assert.equal(toolCall.result.content[0].text, "Issue 42 is open.");
+    assert.deepEqual(
+      JSON.parse(
+        f.app.store.one(
+          "SELECT argument_keys_json FROM mcp_tool_calls WHERE id=?",
+          [toolCall.id],
+        ).argument_keys_json,
+      ),
+      ["issue"],
+    );
+    await assert.rejects(
+      () =>
+        f.request(`/mcp/${publicServer.id}/tools/call`, "POST", {
+          name: "not-in-registry",
+          arguments: {},
+        }),
+      /discovered registry/,
+    );
   } finally {
     await f.app.close();
     await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("local stdio MCP servers use an isolated process for discovery and tool calls", async () => {
+  const program = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "roster-local-mcp-")),
+    "server.mjs",
+  );
+  fs.writeFileSync(
+    program,
+    `import readline from "node:readline";
+const input = readline.createInterface({ input: process.stdin });
+input.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (!request.id) return;
+  const result = request.method === "initialize"
+    ? { protocolVersion: "2025-11-25", serverInfo: { name: "Fixture stdio MCP" }, capabilities: { tools: {} } }
+    : request.method === "tools/list"
+      ? { tools: [{ name: "notes.read", description: "Read a note", inputSchema: { type: "object" } }] }
+      : request.method === "tools/call"
+        ? { content: [{ type: "text", text: "Local note: " + request.params.arguments.slug }] }
+        : {};
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
+});
+`,
+  );
+  const f = await fixture(async () => ({ text: "unused" }));
+  try {
+    const connection = await f.request("/mcp/discover-local", "POST", {
+      command: process.execPath,
+      args: [program],
+    });
+    assert.equal(connection.transport, "stdio");
+    assert.equal(connection.serverName, "Fixture stdio MCP");
+    const call = await f.request(`/mcp/${connection.id}/tools/call`, "POST", {
+      name: "notes.read",
+      arguments: { slug: "launch" },
+    });
+    assert.equal(call.result.content[0].text, "Local note: launch");
+  } finally {
+    await f.app.close();
   }
 });
 

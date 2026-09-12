@@ -14,7 +14,12 @@ import { acquireLock } from "./lock.mjs";
 import { integrationCheck, taskInspection } from "./worktree.mjs";
 import { refreshIntegrations } from "./integrations.mjs";
 import { inspectProject, saveProjectProfile } from "./projects.mjs";
-import { discoverMcp } from "./mcp.mjs";
+import {
+  callLocalMcpTool,
+  callMcpTool,
+  discoverLocalMcp,
+  discoverMcp,
+} from "./mcp.mjs";
 import { createGithubOwnership } from "./github.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
@@ -231,7 +236,7 @@ export async function createServer({
       .parse(req.body);
     const connection = await discoverMcp(url);
     store.run(
-      "INSERT INTO mcp_connections(id,url,server_name,status,detail,protocol_version,capabilities_json,auth_metadata_json,tools_json,discovered_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET server_name=excluded.server_name,status=excluded.status,detail=excluded.detail,protocol_version=excluded.protocol_version,capabilities_json=excluded.capabilities_json,auth_metadata_json=excluded.auth_metadata_json,tools_json=excluded.tools_json,updated_at=excluded.updated_at",
+      "INSERT INTO mcp_connections(id,url,server_name,status,detail,protocol_version,capabilities_json,auth_metadata_json,tools_json,transport,stdio_json,discovered_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET server_name=excluded.server_name,status=excluded.status,detail=excluded.detail,protocol_version=excluded.protocol_version,capabilities_json=excluded.capabilities_json,auth_metadata_json=excluded.auth_metadata_json,tools_json=excluded.tools_json,transport=excluded.transport,stdio_json=excluded.stdio_json,updated_at=excluded.updated_at",
       [
         connection.id,
         connection.url,
@@ -242,12 +247,98 @@ export async function createServer({
         JSON.stringify(connection.capabilities),
         JSON.stringify(connection.authMetadata),
         JSON.stringify(connection.tools || []),
+        connection.transport,
+        JSON.stringify(connection.stdio || {}),
         now(),
         now(),
       ],
     );
     changed();
     res.json(connection);
+  });
+  app.post("/api/mcp/discover-local", async (req, res) => {
+    const config = z
+      .object({
+        command: z.string().trim().min(1).max(1000),
+        args: z.array(z.string().max(2000)).max(50).default([]),
+      })
+      .parse(req.body);
+    const connection = await discoverLocalMcp(config);
+    store.run(
+      "INSERT INTO mcp_connections(id,url,server_name,status,detail,protocol_version,capabilities_json,auth_metadata_json,tools_json,transport,stdio_json,discovered_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET server_name=excluded.server_name,status=excluded.status,detail=excluded.detail,protocol_version=excluded.protocol_version,capabilities_json=excluded.capabilities_json,auth_metadata_json=excluded.auth_metadata_json,tools_json=excluded.tools_json,transport=excluded.transport,stdio_json=excluded.stdio_json,updated_at=excluded.updated_at",
+      [
+        connection.id,
+        connection.url,
+        connection.serverName,
+        connection.status,
+        connection.detail,
+        connection.protocolVersion,
+        JSON.stringify(connection.capabilities),
+        JSON.stringify(connection.authMetadata),
+        JSON.stringify(connection.tools || []),
+        connection.transport,
+        JSON.stringify(connection.stdio || {}),
+        now(),
+        now(),
+      ],
+    );
+    changed();
+    res.json(connection);
+  });
+  app.post("/api/mcp/:id/tools/call", async (req, res) => {
+    const connection = must("mcp_connections", req.params.id);
+    if (connection.status !== "available")
+      throw new Error("Connect this MCP server before calling a tool.");
+    const body = z
+      .object({
+        name: z.string().trim().min(1).max(200),
+        arguments: z.record(z.string(), z.unknown()).default({}),
+      })
+      .parse(req.body);
+    const tools = JSON.parse(connection.tools_json || "[]");
+    if (!tools.some((tool) => tool.name === body.name))
+      throw new Error(
+        "Only tools in this server's discovered registry can run.",
+      );
+    const argumentSize = JSON.stringify(body.arguments).length;
+    if (argumentSize > 50000)
+      throw new Error("MCP tool arguments must be 50 KB or smaller.");
+    const callId = id();
+    store.run(
+      "INSERT INTO mcp_tool_calls(id,connection_id,tool_name,argument_keys_json,status,created_at) VALUES(?,?,?,?,?,?)",
+      [
+        callId,
+        connection.id,
+        body.name,
+        JSON.stringify(Object.keys(body.arguments).sort()),
+        "running",
+        now(),
+      ],
+    );
+    try {
+      const result =
+        connection.transport === "stdio"
+          ? await callLocalMcpTool(
+              JSON.parse(connection.stdio_json || "{}"),
+              body.name,
+              body.arguments,
+            )
+          : await callMcpTool(connection.url, body.name, body.arguments);
+      const summary = JSON.stringify(result).slice(0, 2000);
+      store.run(
+        "UPDATE mcp_tool_calls SET status='completed',summary=?,completed_at=? WHERE id=?",
+        [summary, now(), callId],
+      );
+      changed();
+      res.json({ id: callId, result });
+    } catch (error) {
+      store.run(
+        "UPDATE mcp_tool_calls SET status='failed',summary=?,completed_at=? WHERE id=?",
+        [cleanError(error), now(), callId],
+      );
+      changed();
+      throw error;
+    }
   });
   app.get("/api/events", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");

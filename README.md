@@ -72,7 +72,7 @@ Roster maintains a local registry for GitHub, Playwright, Sentry, Vercel, CodeRa
 
 When GitHub CLI is authenticated, a completed Git-backed task can track its pull request. Roster records the pull request relationship locally, checks review, CI, conflict, and merge state, and puts only actionable changes in Needs You. Tracking is read-only and does not create, merge, or modify pull requests.
 
-MCP servers can be discovered from Settings. Discovery records the server's capabilities and protected-resource authorization metadata without sending credentials. Remote endpoints must use HTTPS; loopback HTTP is supported for local development. OAuth authorization and tool execution are intentionally not enabled by discovery alone.
+MCP servers can be discovered from Settings. Remote endpoints use HTTPS, except loopback HTTP for local development, and local stdio servers run as short-lived direct processes without a shell. Discovery records capabilities and protected-resource authorization metadata without sending credentials. A user can run only a discovered tool from Settings with explicit JSON arguments; Roster stores an audit record of the tool name, argument keys, status, and bounded result summary. OAuth authorization remains unavailable until a connected authorization flow is implemented.
 
 When a worker is attached to a project, it can inspect the local package scripts and project instruction files. You can explicitly save that inspection as a project profile, so later tasks in the same folder receive the relevant checks and instructions without relying on hidden context.
 

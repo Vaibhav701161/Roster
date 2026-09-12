@@ -586,7 +586,18 @@ function SettingsView({ state, act, notify }: Props) {
     [workspaceName, setWorkspaceName] = useState(state.settings.workspaceName),
     [mcpUrl, setMcpUrl] = useState(""),
     [mcpBusy, setMcpBusy] = useState(false),
-    [mcpError, setMcpError] = useState("");
+    [mcpError, setMcpError] = useState(""),
+    [localMcpCommand, setLocalMcpCommand] = useState(""),
+    [localMcpArgs, setLocalMcpArgs] = useState("[]"),
+    [localMcpBusy, setLocalMcpBusy] = useState(false),
+    [localMcpError, setLocalMcpError] = useState(""),
+    [mcpTool, setMcpTool] = useState<{
+      connectionId: string;
+      name: string;
+      argumentsText: string;
+      result: string;
+      error: string;
+    } | null>(null);
   const test = async (provider: string) => {
     setTesting(provider);
     setResult("");
@@ -750,26 +761,165 @@ function SettingsView({ state, act, notify }: Props) {
             </button>
           </form>
           {mcpError && <p className="form-error">{mcpError}</p>}
-          {state.mcpConnections.map((connection) => (
-            <div className="provider-row" key={connection.id}>
-              <span className="provider-logo">
-                <Code2 size={21} />
-              </span>
-              <div>
-                <strong>{connection.server_name}</strong>
-                <small>{connection.detail}</small>
-                {JSON.parse(connection.tools_json || "[]").length ? (
+          <details className="setting-row">
+            <summary>Connect a local stdio server</summary>
+            <form
+              className="field"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                setLocalMcpBusy(true);
+                setLocalMcpError("");
+                try {
+                  const args = JSON.parse(localMcpArgs);
+                  if (
+                    !Array.isArray(args) ||
+                    args.some((arg) => typeof arg !== "string")
+                  )
+                    throw new Error(
+                      "Local MCP arguments must be a JSON string array.",
+                    );
+                  await act(() =>
+                    api("/mcp/discover-local", "POST", {
+                      command: localMcpCommand,
+                      args,
+                    }),
+                  );
+                  setLocalMcpCommand("");
+                  setLocalMcpArgs("[]");
+                  notify("Local MCP discovery is complete.");
+                } catch (error) {
+                  setLocalMcpError((error as Error).message);
+                } finally {
+                  setLocalMcpBusy(false);
+                }
+              }}
+            >
+              <small>
+                Roster starts this command directly without a shell. Connect
+                only local tools you trust.
+              </small>
+              <input
+                aria-label="Local MCP command"
+                placeholder="npx"
+                required
+                value={localMcpCommand}
+                onChange={(event) => setLocalMcpCommand(event.target.value)}
+              />
+              <textarea
+                aria-label="Local MCP arguments"
+                value={localMcpArgs}
+                onChange={(event) => setLocalMcpArgs(event.target.value)}
+              />
+              <button className="secondary" disabled={localMcpBusy}>
+                {localMcpBusy ? "Discovering…" : "Discover local server"}
+              </button>
+              {localMcpError && <p className="form-error">{localMcpError}</p>}
+            </form>
+          </details>
+          {state.mcpConnections.map((connection) => {
+            const tools = JSON.parse(connection.tools_json || "[]") as {
+              name: string;
+              description: string;
+            }[];
+            return (
+              <div className="provider-row" key={connection.id}>
+                <span className="provider-logo">
+                  <Code2 size={21} />
+                </span>
+                <div>
+                  <strong>{connection.server_name}</strong>
                   <small>
-                    {JSON.parse(connection.tools_json || "[]").length} tools in
-                    the local registry
+                    {connection.transport === "stdio"
+                      ? "Local stdio"
+                      : "Remote HTTP"}
                   </small>
-                ) : null}
+                  <small>{connection.detail}</small>
+                  {tools.length ? (
+                    <details>
+                      <summary>
+                        {tools.length} tools in the local registry
+                      </summary>
+                      {tools.map((tool) => (
+                        <button
+                          className="text-button"
+                          key={tool.name}
+                          onClick={() =>
+                            setMcpTool({
+                              connectionId: connection.id,
+                              name: tool.name,
+                              argumentsText: "{}",
+                              result: "",
+                              error: "",
+                            })
+                          }
+                        >
+                          Run {tool.name}
+                        </button>
+                      ))}
+                    </details>
+                  ) : null}
+                </div>
+                <span className="status-pill">
+                  {statusLabel[connection.status] || connection.status}
+                </span>
               </div>
-              <span className="status-pill">
-                {statusLabel[connection.status] || connection.status}
-              </span>
-            </div>
-          ))}
+            );
+          })}
+          {mcpTool && (
+            <form
+              className="field"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                try {
+                  const argumentsValue = JSON.parse(mcpTool.argumentsText);
+                  if (
+                    !argumentsValue ||
+                    Array.isArray(argumentsValue) ||
+                    typeof argumentsValue !== "object"
+                  )
+                    throw new Error("Tool arguments must be a JSON object.");
+                  const response = await api<{ result: unknown }>(
+                    `/mcp/${mcpTool.connectionId}/tools/call`,
+                    "POST",
+                    { name: mcpTool.name, arguments: argumentsValue },
+                  );
+                  setMcpTool({
+                    ...mcpTool,
+                    result: JSON.stringify(response.result, null, 2),
+                    error: "",
+                  });
+                } catch (error) {
+                  setMcpTool({
+                    ...mcpTool,
+                    error: (error as Error).message,
+                  });
+                }
+              }}
+            >
+              <strong>Run {mcpTool.name}</strong>
+              <small>
+                This sends a direct request to the selected MCP server. Use only
+                arguments you intend to share with that server.
+              </small>
+              <textarea
+                aria-label={`Arguments for ${mcpTool.name}`}
+                value={mcpTool.argumentsText}
+                onChange={(event) =>
+                  setMcpTool({ ...mcpTool, argumentsText: event.target.value })
+                }
+              />
+              <button className="secondary">Run tool</button>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => setMcpTool(null)}
+              >
+                Close
+              </button>
+              {mcpTool.error && <p className="form-error">{mcpTool.error}</p>}
+              {mcpTool.result && <pre>{mcpTool.result}</pre>}
+            </form>
+          )}
         </section>
         <section className="settings-section">
           <h2>AI connections</h2>

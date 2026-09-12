@@ -117,6 +117,18 @@ export async function openStore(directory) {
       CREATE INDEX github_ownership_task ON github_ownership(task_id,updated_at);
       INSERT INTO migration VALUES(12,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=13")) {
+    db.exec(`BEGIN;
+      CREATE TABLE mcp_tool_calls(id TEXT PRIMARY KEY,connection_id TEXT NOT NULL REFERENCES mcp_connections(id) ON DELETE CASCADE,tool_name TEXT NOT NULL,argument_keys_json TEXT NOT NULL DEFAULT '[]',status TEXT NOT NULL,summary TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL,completed_at TEXT);
+      CREATE INDEX mcp_tool_calls_connection ON mcp_tool_calls(connection_id,created_at);
+      INSERT INTO migration VALUES(13,datetime('now')); COMMIT;`);
+  }
+  if (!one("SELECT * FROM migration WHERE version=14")) {
+    db.exec(`BEGIN;
+      ALTER TABLE mcp_connections ADD COLUMN transport TEXT NOT NULL DEFAULT 'remote';
+      ALTER TABLE mcp_connections ADD COLUMN stdio_json TEXT NOT NULL DEFAULT '{}';
+      INSERT INTO migration VALUES(14,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

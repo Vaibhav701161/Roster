@@ -1,5 +1,7 @@
 import dns from "node:dns/promises";
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
+import readline from "node:readline";
 
 const protocolVersion = "2025-11-25";
 const privateV4 =
@@ -73,11 +75,26 @@ function rpc(method, params, id) {
   });
 }
 
+function initialization() {
+  return {
+    protocolVersion,
+    capabilities: {},
+    clientInfo: { name: "Roster", version: "0.1.0" },
+  };
+}
+
 const mcpHeaders = {
   Accept: "application/json, text/event-stream",
   "Content-Type": "application/json",
   "MCP-Protocol-Version": protocolVersion,
 };
+
+function sessionHeaders(sessionId = "") {
+  return {
+    ...mcpHeaders,
+    ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
+  };
+}
 
 async function request(url, options = {}) {
   const response = await fetch(url, {
@@ -133,15 +150,36 @@ async function protectedMetadata(endpoint, challenge) {
   return null;
 }
 
-async function discoverTools(url) {
-  await request(url, {
+async function initialize(url) {
+  const response = await request(url, {
     method: "POST",
     headers: mcpHeaders,
+    body: mcpRequest(),
+  });
+  if (!response.ok)
+    throw new Error(
+      `MCP server returned ${response.status} during initialization.`,
+    );
+  const body = await json(response);
+  if (body.error)
+    throw new Error(
+      body.error.message || "MCP server rejected initialization.",
+    );
+  return {
+    result: body.result || {},
+    sessionId: response.headers.get("mcp-session-id") || "",
+  };
+}
+
+async function discoverTools(url, sessionId = "") {
+  await request(url, {
+    method: "POST",
+    headers: sessionHeaders(sessionId),
     body: rpc("notifications/initialized"),
   });
   const response = await request(url, {
     method: "POST",
-    headers: mcpHeaders,
+    headers: sessionHeaders(sessionId),
     body: rpc("tools/list", {}, "roster-tools"),
   });
   if (!response.ok) return [];
@@ -153,6 +191,192 @@ async function discoverTools(url) {
         inputSchema: tool.inputSchema || {},
       }))
     : [];
+}
+
+export async function callMcpTool(urlValue, name, args = {}) {
+  const url = await canonicalMcpUrl(urlValue);
+  const initialized = await initialize(url);
+  if (!initialized.result.capabilities?.tools)
+    throw new Error("This MCP server does not advertise tool support.");
+  await request(url, {
+    method: "POST",
+    headers: sessionHeaders(initialized.sessionId),
+    body: rpc("notifications/initialized"),
+  });
+  const response = await request(url, {
+    method: "POST",
+    headers: sessionHeaders(initialized.sessionId),
+    body: rpc("tools/call", { name, arguments: args }, "roster-tool-call"),
+  });
+  if (!response.ok)
+    throw new Error(
+      `MCP server returned ${response.status} while calling ${name}.`,
+    );
+  const body = await json(response);
+  if (body.error)
+    throw new Error(
+      body.error.message || `MCP tool ${name} returned an error.`,
+    );
+  const result = body.result || {};
+  const serialized = JSON.stringify(result);
+  if (serialized.length > 200000)
+    throw new Error("MCP tool response exceeded Roster's 200 KB safety limit.");
+  return result;
+}
+
+function validStdioConfig(config) {
+  if (
+    !config ||
+    typeof config.command !== "string" ||
+    !config.command.trim() ||
+    config.command.length > 1000 ||
+    config.command.includes("\0") ||
+    !Array.isArray(config.args) ||
+    config.args.length > 50 ||
+    config.args.some(
+      (arg) =>
+        typeof arg !== "string" || arg.length > 2000 || arg.includes("\0"),
+    )
+  )
+    throw new Error("Enter a local MCP command and up to 50 safe arguments.");
+  return { command: config.command.trim(), args: config.args };
+}
+
+async function withStdioSession(config, work) {
+  const safe = validStdioConfig(config);
+  const child = spawn(safe.command, safe.args, {
+    stdio: ["pipe", "pipe", "pipe"],
+    shell: false,
+    windowsHide: true,
+  });
+  const pending = new Map();
+  let stderr = "",
+    terminalError = null;
+  const fail = (error) => {
+    if (terminalError) return;
+    terminalError = error;
+    for (const { reject, timer } of pending.values()) {
+      clearTimeout(timer);
+      reject(error);
+    }
+    pending.clear();
+  };
+  child.once("error", (error) => fail(error));
+  child.stderr.on("data", (chunk) => {
+    stderr = (stderr + String(chunk)).slice(-4000);
+  });
+  const lines = readline.createInterface({ input: child.stdout });
+  lines.on("line", (line) => {
+    if (line.length > 1024 * 1024)
+      return fail(new Error("Local MCP server sent an oversized response."));
+    try {
+      const payload = JSON.parse(line);
+      const key = String(payload.id || "");
+      const waiting = pending.get(key);
+      if (!waiting) return;
+      pending.delete(key);
+      clearTimeout(waiting.timer);
+      if (payload.error)
+        waiting.reject(
+          new Error(payload.error.message || "Local MCP returned an error."),
+        );
+      else waiting.resolve(payload.result || {});
+    } catch {
+      fail(new Error("Local MCP server returned invalid JSON-RPC output."));
+    }
+  });
+  child.once("exit", (code) => {
+    if (!terminalError && pending.size)
+      fail(
+        new Error(
+          `Local MCP server exited${code === null ? "" : ` with code ${code}`}${stderr ? `: ${stderr}` : ""}`,
+        ),
+      );
+  });
+  const send = (method, params, requestId) => {
+    if (terminalError) return Promise.reject(terminalError);
+    const payload = rpc(method, params, requestId);
+    if (!requestId) {
+      child.stdin.write(payload + "\n");
+      return Promise.resolve({});
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(requestId);
+        reject(new Error(`Local MCP timed out while calling ${method}.`));
+      }, 7000);
+      pending.set(requestId, { resolve, reject, timer });
+      child.stdin.write(payload + "\n");
+    });
+  };
+  try {
+    const initialized = await send(
+      "initialize",
+      initialization(),
+      "roster-discovery",
+    );
+    await send("notifications/initialized");
+    return await work({ result: initialized, send });
+  } finally {
+    lines.close();
+    fail(new Error("Local MCP session closed."));
+    child.kill();
+  }
+}
+
+export async function discoverLocalMcp(config) {
+  const safe = validStdioConfig(config);
+  const connectionId = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(safe))
+    .digest("hex")
+    .slice(0, 24);
+  const { result, tools } = await withStdioSession(safe, async (session) => {
+    const tools = session.result.capabilities?.tools
+      ? await session.send("tools/list", {}, "roster-tools")
+      : {};
+    return {
+      result: session.result,
+      tools: Array.isArray(tools.tools)
+        ? tools.tools.slice(0, 100).map((tool) => ({
+            name: String(tool.name || "Unnamed tool").slice(0, 200),
+            description: String(tool.description || "").slice(0, 2000),
+            inputSchema: tool.inputSchema || {},
+          }))
+        : [],
+    };
+  });
+  return {
+    id: connectionId,
+    url: `stdio://${connectionId}`,
+    transport: "stdio",
+    stdio: safe,
+    status: "available",
+    detail: `Local MCP server initialized.${tools.length ? ` ${tools.length} tool${tools.length === 1 ? "" : "s"} discovered.` : ""}`,
+    serverName: result.serverInfo?.name || safe.command,
+    protocolVersion: result.protocolVersion || protocolVersion,
+    capabilities: Object.keys(result.capabilities || {}),
+    tools,
+    authMetadata: {},
+  };
+}
+
+export async function callLocalMcpTool(config, name, args = {}) {
+  const result = await withStdioSession(config, (session) => {
+    if (!session.result.capabilities?.tools)
+      throw new Error("This local MCP server does not advertise tool support.");
+    return session.send(
+      "tools/call",
+      { name, arguments: args },
+      "roster-tool-call",
+    );
+  });
+  const serialized = JSON.stringify(result);
+  if (serialized.length > 200000)
+    throw new Error(
+      "Local MCP tool response exceeded Roster's 200 KB safety limit.",
+    );
+  return result;
 }
 
 export async function discoverMcp(value) {
@@ -188,23 +412,22 @@ export async function discoverMcp(value) {
         authorization_servers: metadata.authorization_servers || [],
         scopes_supported: metadata.scopes_supported || [],
       },
+      transport: "remote",
+      stdio: {},
     };
   }
-  if (!response.ok)
-    throw new Error(
-      `MCP server returned ${response.status} during initialization.`,
-    );
   const body = await json(response);
   if (body.error)
     throw new Error(
       body.error.message || "MCP server rejected initialization.",
     );
   const result = body.result || {};
+  const sessionId = response.headers.get("mcp-session-id") || "";
   let tools = [];
   let toolDetail = "";
   if (result.capabilities?.tools) {
     try {
-      tools = await discoverTools(url);
+      tools = await discoverTools(url, sessionId);
     } catch {
       toolDetail =
         " The server accepted initialization, but its tool registry was unavailable.";
@@ -220,5 +443,7 @@ export async function discoverMcp(value) {
     capabilities: Object.keys(result.capabilities || {}),
     tools,
     authMetadata: {},
+    transport: "remote",
+    stdio: {},
   };
 }

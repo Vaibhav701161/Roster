@@ -133,6 +133,8 @@ export type McpConnection = {
   protocol_version: string;
   capabilities_json: string;
   tools_json: string;
+  transport: "remote" | "stdio";
+  stdio_json: string;
   updated_at: string;
 };
 export type ProjectProfile = {
