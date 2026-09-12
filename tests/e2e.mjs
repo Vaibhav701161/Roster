@@ -6,8 +6,9 @@ import assert from "node:assert/strict";
 const directory = path.resolve("test-results", "web-e2e-" + Date.now());
 fs.mkdirSync(directory, { recursive: true });
 const service = await createServer({ directory, port: 0 });
+const requestedBrowser = process.env.ROSTER_TEST_BROWSER || "msedge";
 const browser = await chromium.launch({
-  channel: process.env.ROSTER_TEST_BROWSER || "msedge",
+  ...(requestedBrowser === "chromium" ? {} : { channel: requestedBrowser }),
   headless: true,
 });
 const page = await browser.newPage({ viewport: { width: 1440, height: 950 } }),
