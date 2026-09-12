@@ -73,6 +73,13 @@ export async function openStore(directory) {
       CREATE INDEX attention_open ON attention_items(status,created_at);
       INSERT INTO migration VALUES(4,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=5")) {
+    db.exec(`BEGIN;
+      CREATE TABLE integrations(id TEXT PRIMARY KEY,provider TEXT NOT NULL UNIQUE,name TEXT NOT NULL,type TEXT NOT NULL,status TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',capabilities_json TEXT NOT NULL DEFAULT '[]',risk_policy_json TEXT NOT NULL DEFAULT '{}',workspace_scope_json TEXT NOT NULL DEFAULT '[]',updated_at TEXT NOT NULL);
+      CREATE TABLE integration_tools(id TEXT PRIMARY KEY,integration_id TEXT NOT NULL REFERENCES integrations(id) ON DELETE CASCADE,name TEXT NOT NULL,description TEXT NOT NULL,input_schema_json TEXT NOT NULL DEFAULT '{}',risk TEXT NOT NULL,required_permissions_json TEXT NOT NULL DEFAULT '[]',evidence_type TEXT NOT NULL DEFAULT '',UNIQUE(integration_id,name));
+      CREATE INDEX integration_tool_integration ON integration_tools(integration_id);
+      INSERT INTO migration VALUES(5,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

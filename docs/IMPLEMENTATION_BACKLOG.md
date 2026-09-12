@@ -4,17 +4,17 @@ This document tracks the product work from the current engineering and messenger
 
 ## In progress
 
-- [ ] Replace action-word routing with persisted structured intent.
-- [ ] Add provider capabilities and one Roster permission policy for every worker.
-- [ ] Store explicit review verdicts and run bounded repair and re-verification cycles.
-- [ ] Give coding tasks isolated Git worktrees and task-scoped diffs.
-- [ ] Add outcome contracts, acceptance criteria, evidence, and work receipts.
-- [ ] Add the dedicated Needs You inbox.
+- [x] Replace action-word routing with persisted structured intent.
+- [x] Add provider capabilities and one Roster permission policy for every worker.
+- [x] Store explicit review verdicts and run bounded repair and re-verification cycles.
+- [x] Give coding tasks isolated Git worktrees and task-scoped diffs.
+- [x] Add outcome contracts, acceptance criteria, evidence, and work receipts.
+- [x] Add the dedicated Needs You inbox.
 
 ## Next
 
 - [ ] Add bounded replanning, project recipes, instruction import, and durable project memory.
-- [ ] Add the integration control plane with credential-aware health, risk, scoped tools, and graceful unavailable states.
+- [x] Add the local integration control plane with credential-aware health, risk, scoped tools, and graceful unavailable states.
 - [ ] Build the engineering integrations in priority order: GitHub, Sentry, Vercel, Playwright, CodeRabbit, Linear, Supabase/Postgres, Slack, and Notion.
 - [ ] Add continuous ownership, proactive monitoring, and fact-based weekly receipts.
 

@@ -66,6 +66,10 @@ Windows builds an NSIS installer. Linux builds AppImage and deb packages. macOS 
 
 Provider credentials are never stored in SQLite or returned through application state. The packaged desktop app uses OS-backed secure storage where Electron supports it.
 
+## Engineering integrations
+
+Roster maintains a local registry for GitHub, Playwright, Sentry, Vercel, CodeRabbit, Linear, Supabase, Slack, and Notion. Each integration has a narrow capability catalog and an approval-aware risk class. The app detects local GitHub, Vercel, CodeRabbit, Supabase, and Playwright tooling. Services that need an account remain clearly marked as unavailable or sign-in required until connected.
+
 ## How it works
 
 ```mermaid

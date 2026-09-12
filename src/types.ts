@@ -100,8 +100,19 @@ export type State = {
   needsYou: AttentionItem[];
   memories: Memory[];
   providers: Provider[];
+  integrations: Integration[];
   planning: string[];
   settings: Settings;
+};
+export type Integration = {
+  id: string;
+  provider: string;
+  name: string;
+  type: string;
+  status: string;
+  detail: string;
+  capabilities_json: string;
+  updated_at: string;
 };
 export type AttentionItem = {
   id: string;

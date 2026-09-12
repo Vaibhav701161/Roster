@@ -654,6 +654,32 @@ test("disconnecting a compatible provider clears its endpoint-bound key", async 
   }
 });
 
+test("integration refresh persists scoped engineering tool status without credentials", async () => {
+  const f = await fixture(async () => ({ text: "unused" }));
+  try {
+    const refreshed = await f.request("/integrations/refresh", "POST", {});
+    assert.equal(refreshed.integrations.length, 9);
+    const github = refreshed.integrations.find(
+      (item) => item.provider === "github",
+    );
+    const playwright = refreshed.integrations.find(
+      (item) => item.provider === "playwright",
+    );
+    assert.ok(
+      ["connected", "authentication_required", "unavailable"].includes(
+        github.status,
+      ),
+    );
+    assert.equal(playwright.status, "available");
+    assert.equal(
+      f.app.store.one("SELECT COUNT(*) count FROM integration_tools").count,
+      9,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
 test(
   "Windows secret persistence uses DPAPI and does not store the cleartext key",
   { skip: process.platform !== "win32" },

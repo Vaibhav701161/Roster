@@ -619,6 +619,33 @@ function SettingsView({ state, act, notify }: Props) {
           </form>
         </section>
         <section className="settings-section">
+          <h2>Engineering integrations</h2>
+          <p>
+            Connected tools supply scoped context and verification evidence.
+            Roster keeps external writes behind its approval policy.
+          </p>
+          {state.integrations.map((integration) => (
+            <div className="provider-row" key={integration.id}>
+              <span className="provider-logo">
+                <Code2 size={21} />
+              </span>
+              <div>
+                <strong>{integration.name}</strong>
+                <small>{integration.detail}</small>
+              </div>
+              <span className="status-pill">
+                {statusLabel[integration.status] || integration.status}
+              </span>
+            </div>
+          ))}
+          <button
+            className="text-button"
+            onClick={() => act(() => api("/integrations/refresh", "POST", {}))}
+          >
+            <RefreshCw size={13} /> Refresh integrations
+          </button>
+        </section>
+        <section className="settings-section">
           <h2>AI connections</h2>
           <p>
             Your workers use these connections to respond and get things done.

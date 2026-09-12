@@ -12,6 +12,7 @@ import { cleanError } from "./runtime.mjs";
 import { createVault, providerKey } from "./vault.mjs";
 import { acquireLock } from "./lock.mjs";
 import { taskInspection } from "./worktree.mjs";
+import { refreshIntegrations } from "./integrations.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const exec = promisify(execFile);
 const short = z.string().trim().min(1).max(100);
@@ -142,6 +143,7 @@ export async function createServer({
         "SELECT * FROM attention_items WHERE status='open' ORDER BY created_at DESC LIMIT 100",
       ),
       memories: store.all("SELECT * FROM memories"),
+      integrations: store.all("SELECT * FROM integrations ORDER BY name"),
       providers: engine.health,
       planning: [...engine.planning.keys()],
       settings: {
@@ -158,6 +160,11 @@ export async function createServer({
     };
   }
   app.get("/api/state", (req, res) => res.json(snapshot()));
+  app.post("/api/integrations/refresh", async (req, res) => {
+    const integrations = await refreshIntegrations(store);
+    changed();
+    res.json({ integrations });
+  });
   app.get("/api/events", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -653,6 +660,9 @@ export async function createServer({
     throw error;
   }
   engine.detect().catch(() => {});
+  refreshIntegrations(store)
+    .then(changed)
+    .catch(() => {});
   return {
     app,
     server,
