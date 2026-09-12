@@ -53,7 +53,15 @@ export function WorkerModal({
 }) {
   const [form, setForm] = useState({ ...defaults, ...value }),
     [error, setError] = useState(""),
-    [saving, setSaving] = useState(false);
+    [saving, setSaving] = useState(false),
+    [project, setProject] = useState<{
+      name: string;
+      packageManager: string | null;
+      scripts: { name: string; command: string }[];
+      instructions: { name: string; content: string }[];
+      suggestions: string[];
+    } | null>(null),
+    [inspecting, setInspecting] = useState(false);
   const change = (key: string, value: unknown) =>
     setForm((f) => ({ ...f, [key]: value }));
   const save = async (e: React.FormEvent) => {
@@ -169,7 +177,59 @@ export function WorkerModal({
               Attach a folder for project work. Leave empty for general
               assistance.
             </small>
+            {form.workspace && (
+              <button
+                type="button"
+                className="text-button"
+                disabled={inspecting}
+                onClick={async () => {
+                  setInspecting(true);
+                  setError("");
+                  try {
+                    setProject(
+                      await api("/projects/inspect", "POST", {
+                        workspace: form.workspace,
+                      }),
+                    );
+                  } catch (error) {
+                    setError((error as Error).message);
+                  } finally {
+                    setInspecting(false);
+                  }
+                }}
+              >
+                {inspecting ? "Inspecting project…" : "Inspect project"}
+              </button>
+            )}
           </label>
+          {project && (
+            <div className="provider-detail">
+              <strong>{project.name}</strong>
+              {project.suggestions.length > 0 && (
+                <small>
+                  Suggested checks: {project.suggestions.join(", ")}
+                </small>
+              )}
+              {project.instructions.length > 0 && (
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() =>
+                    change(
+                      "instructions",
+                      `${form.instructions ? `${form.instructions}\n\n` : ""}Imported project instructions:\n${project.instructions.map((file) => `# ${file.name}\n${file.content}`).join("\n\n")}`.slice(
+                        0,
+                        8000,
+                      ),
+                    )
+                  }
+                >
+                  Import {project.instructions.length} project instruction file
+                  {project.instructions.length === 1 ? "" : "s"}
+                </button>
+              )}
+            </div>
+          )}
           <details className="advanced">
             <summary>Advanced settings</summary>
             <label className="field">
