@@ -482,12 +482,31 @@ test("coding work receives an isolated worktree with a persisted outcome and tas
   fs.writeFileSync(path.join(workspace, ".env.local"), "LOCAL_ONLY=true\n");
   let executionWorkspace = "";
   let copiedEnvironment = "";
-  const f = await fixture(async (o) => {
-    executionWorkspace = o.cwd;
-    copiedEnvironment = fs.readFileSync(path.join(o.cwd, ".env.local"), "utf8");
-    fs.writeFileSync(path.join(o.cwd, "example.txt"), "after\n");
-    return { text: "The fix is ready for review." };
-  });
+  const integrationCommands = [];
+  const f = await fixture(
+    async (o) => {
+      executionWorkspace = o.cwd;
+      copiedEnvironment = fs.readFileSync(
+        path.join(o.cwd, ".env.local"),
+        "utf8",
+      );
+      fs.writeFileSync(path.join(o.cwd, "example.txt"), "after\n");
+      return { text: "The fix is ready for review." };
+    },
+    {
+      integrationCommand: async (command, args, options) => {
+        integrationCommands.push({ command, args, options });
+        return JSON.stringify({
+          findings: [
+            {
+              severity: "medium",
+              description: "Handle the release edge case.",
+            },
+          ],
+        });
+      },
+    },
+  );
   try {
     await f.request("/projects/profile", "POST", { workspace });
     const a = await f.request("/agents", "POST", worker("Alex", { workspace }));
@@ -526,6 +545,39 @@ test("coding work receives an isolated worktree with a persisted outcome and tas
         ).detail,
       ).copiedEnvironmentFiles,
       [".env.local"],
+    );
+    await f.request("/integrations/refresh", "POST", {});
+    f.app.store.run(
+      "UPDATE integrations SET status='available' WHERE provider='coderabbit'",
+    );
+    const codeRabbit = await f.request(
+      `/tasks/${task.id}/coderabbit-review`,
+      "POST",
+      {},
+    );
+    assert.match(codeRabbit.summary, /1 structured result.*1 finding/);
+    assert.deepEqual(integrationCommands, [
+      {
+        command: "coderabbit",
+        args: ["review", "--agent"],
+        options: {
+          cwd: executionWorkspace,
+          timeout: 600000,
+          maxBuffer: 500000,
+        },
+      },
+    ]);
+    assert.match(
+      f.app.store.one("SELECT content FROM artifacts WHERE id=?", [
+        codeRabbit.artifactId,
+      ]).content,
+      /Handle the release edge case/,
+    );
+    assert.equal(
+      f.app.store.one("SELECT status FROM evidence WHERE id=?", [
+        codeRabbit.evidenceId,
+      ]).status,
+      "observed",
     );
     const handoff = await f.request(
       `/tasks/${task.id}/integration-ready`,
@@ -928,6 +980,196 @@ test("native integration tokens stay in the vault and are verified without enter
       ).credential_configured,
       false,
     );
+  } finally {
+    await f.app.close();
+  }
+});
+
+test("Slack and Notion expose bounded read-only project context", async () => {
+  const secrets = new Map();
+  const calls = [];
+  const vault = {
+    mode: "test",
+    get: () => "",
+    set: () => {},
+    getNamed: (key) => secrets.get(key) || "",
+    setNamed: (key, value) => secrets.set(key, value),
+  };
+  const f = await fixture(async () => ({ text: "unused" }), {
+    vault,
+    integrationFetch: async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (String(url).startsWith("https://slack.com/api/search.messages"))
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            messages: {
+              matches: [
+                {
+                  iid: "slack-result",
+                  channel: { id: "C1", name: "shipping" },
+                  username: "Alex",
+                  text: "Checkout release is ready.",
+                  ts: "1760000000.000001",
+                  permalink: "https://slack.example/archives/C1/p1",
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      if (String(url) === "https://slack.com/api/auth.test")
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      if (String(url) === "https://api.notion.com/v1/search")
+        return new Response(
+          JSON.stringify({
+            results: [
+              {
+                id: "notion-result",
+                object: "page",
+                title: [{ plain_text: "Checkout launch decision" }],
+                last_edited_time: "2026-01-01T00:00:00.000Z",
+                url: "https://notion.so/notion-result",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      if (String(url) === "https://api.notion.com/v1/users/me")
+        return new Response(JSON.stringify({ id: "notion-user" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      return new Response("{}", { status: 401 });
+    },
+  });
+  try {
+    const refreshed = await f.request("/integrations/refresh", "POST", {});
+    const slack = refreshed.integrations.find(
+      (item) => item.provider === "slack",
+    );
+    const notion = refreshed.integrations.find(
+      (item) => item.provider === "notion",
+    );
+    await f.request(`/integrations/${slack.id}/token`, "PUT", {
+      token: "slack-test-token",
+    });
+    await f.request(`/integrations/${notion.id}/token`, "PUT", {
+      token: "notion-test-token",
+    });
+    const slackRead = await f.request(
+      `/integrations/${slack.id}/read`,
+      "POST",
+      {
+        query: "checkout",
+      },
+    );
+    const notionRead = await f.request(
+      `/integrations/${notion.id}/read`,
+      "POST",
+      { query: "checkout" },
+    );
+    assert.equal(slackRead.result[0].channel, "shipping");
+    assert.equal(notionRead.result[0].title, "Checkout launch decision");
+    const slackSearch = calls.find((call) =>
+      call.url.startsWith("https://slack.com/api/search.messages"),
+    );
+    assert.match(slackSearch.url, /query=checkout/);
+    assert.equal(
+      slackSearch.options.headers.Authorization,
+      "Bearer slack-test-token",
+    );
+    const notionSearch = calls.find(
+      (call) => call.url === "https://api.notion.com/v1/search",
+    );
+    assert.equal(notionSearch.options.method, "POST");
+    assert.equal(notionSearch.options.headers["Notion-Version"], "2025-09-03");
+    assert.equal(
+      JSON.stringify(await f.request("/state")).includes("slack-test-token"),
+      false,
+    );
+    assert.equal(
+      JSON.stringify(await f.request("/state")).includes("notion-test-token"),
+      false,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
+test("Vercel and Supabase use bounded local CLI reads", async () => {
+  const commands = [];
+  const f = await fixture(async () => ({ text: "unused" }), {
+    integrationCommand: async (command, args) => {
+      commands.push({ command, args });
+      if (command === "vercel")
+        return JSON.stringify({
+          projects: [
+            {
+              id: "vercel-project",
+              name: "roster-web",
+              framework: "vite",
+              updatedAt: "2026-01-01T00:00:00.000Z",
+              link: { deploymentUrl: "roster-web.vercel.app" },
+            },
+          ],
+        });
+      if (command === "supabase")
+        return JSON.stringify([
+          {
+            id: "supabase-project",
+            ref: "abcdefghijklmnopqrst",
+            name: "Roster production",
+            region: "ap-south-1",
+            status: "ACTIVE_HEALTHY",
+          },
+        ]);
+      return "";
+    },
+  });
+  try {
+    const refreshed = await f.request("/integrations/refresh", "POST", {});
+    const vercel = refreshed.integrations.find(
+      (item) => item.provider === "vercel",
+    );
+    const supabase = refreshed.integrations.find(
+      (item) => item.provider === "supabase",
+    );
+    const vercelRead = await f.request(
+      `/integrations/${vercel.id}/read`,
+      "POST",
+      {},
+    );
+    const supabaseRead = await f.request(
+      `/integrations/${supabase.id}/read`,
+      "POST",
+      {},
+    );
+    assert.equal(vercelRead.result[0].name, "roster-web");
+    assert.equal(supabaseRead.result[0].region, "ap-south-1");
+    assert.deepEqual(commands, [
+      { command: "vercel", args: ["project", "ls", "--json"] },
+      {
+        command: "supabase",
+        args: ["projects", "list", "--output", "json"],
+      },
+    ]);
+    const workspace = fs.mkdtempSync(
+      path.join(os.tmpdir(), "roster-integration-read-scope-"),
+    );
+    await f.request("/projects/profile", "POST", { workspace });
+    await f.request(`/integrations/${vercel.id}/scopes`, "PUT", {
+      workspaces: [workspace],
+    });
+    await assert.rejects(
+      () => f.request(`/integrations/${vercel.id}/read`, "POST", {}),
+      /Select a project allowed/,
+    );
+    await f.request(`/integrations/${vercel.id}/read`, "POST", { workspace });
+    assert.equal(commands.length, 3);
   } finally {
     await f.app.close();
   }

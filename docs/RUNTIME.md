@@ -36,6 +36,10 @@ Roster discovers protected-resource metadata before starting a connection. When 
 
 Sentry, Linear, Slack, and Notion use a token entered in Settings. The token is saved under a provider-specific name in the desktop credential vault, never in SQLite, application state, logs, or a GET response. Roster performs a small read-only account probe when the connection is saved or refreshed. A rejected token is shown as requiring authentication, and a network failure is shown as unavailable; neither state is treated as evidence of completed work.
 
+Connected integrations expose only bounded, user-triggered context reads. Sentry reads up to 25 issues, Linear searches up to 25 issues, Slack searches up to 25 messages with a user token that has `search:read`, and Notion searches up to 25 shared pages or data sources. Vercel and Supabase invoke only their authenticated local CLIs to list up to 25 accessible projects. A scoped integration requires the user to choose an allowed saved project before any context read. Results remain attributed context and never become completion evidence by themselves.
+
+For a completed coding task with an isolated worktree, a user can explicitly run the locally authenticated CodeRabbit CLI in structured agent mode. Roster records its bounded output and findings as external-review evidence. It does not treat a CodeRabbit result as a Roster review verdict, a passed acceptance criterion, or a verified receipt. The action can consume the account's CodeRabbit usage and is never started automatically.
+
 ## Project environments
 
 Roster turns a saved project inspection into a local environment recipe. It detects package-manager setup, scripts, local environment-file names, Docker configuration, CI workflow names, and agent skill directories without executing repository configuration. The recipe can be edited in Settings. Only files explicitly selected by the user are copied into a task's isolated worktree, and copy paths cannot escape the source project. Development recipes reserve a distinct localhost port for each task and expose it as `ROSTER_PORT` in worker context and as a preview URL in task details.

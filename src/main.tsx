@@ -215,10 +215,12 @@ export function Modal({
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     ref.current?.showModal();
+    ref.current?.querySelector<HTMLElement>(".modal-close")?.focus();
   }, []);
   return (
     <dialog
       ref={ref}
+      aria-label={title}
       className={`modal ${wide ? "wide" : ""}`}
       onCancel={onClose}
       onClick={(e) => {
@@ -236,7 +238,7 @@ export function Modal({
     >
       <header>
         <h2>{title}</h2>
-        <IconButton label="Close" onClick={onClose}>
+        <IconButton label="Close" onClick={onClose} className="modal-close">
           <X size={20} />
         </IconButton>
       </header>
@@ -636,7 +638,10 @@ export function App() {
     <div
       className={`app ${view === "Chats" && selected ? "chat-selected" : ""}`}
     >
-      <nav className="nav">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <nav className="nav" aria-label="Workspace navigation">
         <button
           className="brand"
           aria-label="Roster home"
@@ -710,7 +715,7 @@ export function App() {
           </button>
         </div>
       </nav>
-      <main className="main">
+      <main className="main" id="main-content" tabIndex={-1}>
         {!connected && (
           <div className="connection-banner">
             <RefreshCw size={15} /> Reconnecting to your workspace. Saved work
@@ -728,7 +733,7 @@ export function App() {
         )}
         {view === "Chats" ? (
           <div className="messenger">
-            <aside className="chat-list">
+            <aside className="chat-list" aria-label="Chats">
               <header className="list-header">
                 <h1>Chats</h1>
                 <div>
@@ -789,6 +794,7 @@ export function App() {
                     <button
                       key={c.id}
                       className={`conversation-row ${c.id === selected ? "selected" : ""}`}
+                      aria-current={c.id === selected ? "page" : undefined}
                       onClick={() => openChat(c.id)}
                     >
                       <Avatar
@@ -867,7 +873,7 @@ export function App() {
                 <LockKeyhole size={13} /> Conversations saved on this device
               </footer>
             </aside>
-            <section className="conversation">
+            <section className="conversation" aria-label="Conversation">
               {conv ? (
                 <>
                   <header className="conversation-header">

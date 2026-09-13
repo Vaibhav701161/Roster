@@ -167,7 +167,7 @@ const tokenProviders = {
   },
   notion: {
     endpoint: "https://api.notion.com/v1/users/me",
-    headers: () => ({ "Notion-Version": "2022-06-28" }),
+    headers: () => ({ "Notion-Version": "2025-09-03" }),
     valid: (response) => response.ok,
     name: "Notion",
   },
@@ -228,12 +228,13 @@ async function commandStatus(command, args = ["--version"]) {
   }
 }
 
-async function commandOutput(command, args) {
+async function commandOutput(command, args, options = {}) {
   try {
     const { stdout } = await exec(command, args, {
       windowsHide: true,
-      timeout: 10000,
-      maxBuffer: 100000,
+      timeout: options.timeout || 10000,
+      maxBuffer: options.maxBuffer || 100000,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
     });
     return String(stdout).trim();
   } catch {
@@ -353,9 +354,11 @@ export async function readIntegration(
   vault,
   input = {},
   fetchFn = fetch,
+  commandFn = commandOutput,
 ) {
   const token = namedSecret(vault, provider);
-  if (!token) throw new Error(`Connect ${provider} before reading its data.`);
+  if (tokenProviders[provider] && !token)
+    throw new Error(`Connect ${provider} before reading its data.`);
   if (provider === "sentry") {
     const organization = String(input.organization || "").trim();
     const project = String(input.project || "").trim();
@@ -425,7 +428,177 @@ export async function readIntegration(
         url: String(issue.url || ""),
       }));
   }
+  if (provider === "slack") {
+    const query = String(input.query || "")
+      .trim()
+      .slice(0, 300);
+    if (!query) throw new Error("Enter a Slack message search.");
+    const params = new URLSearchParams({
+      query,
+      count: "25",
+      sort: "timestamp",
+      sort_dir: "desc",
+    });
+    const response = await fetchFn(
+      `https://slack.com/api/search.messages?${params}`,
+      {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    const payload = await response.json();
+    if (!response.ok || payload.ok !== true)
+      throw new Error(
+        `Slack could not complete this message search${payload.error ? `: ${String(payload.error).slice(0, 120)}` : "."}`,
+      );
+    return (payload.messages?.matches || []).slice(0, 25).map((message) => ({
+      id: String(
+        message.iid || `${message.channel?.id || ""}:${message.ts || ""}`,
+      ),
+      channel: String(message.channel?.name || message.channel?.id || ""),
+      username: String(message.username || message.user || ""),
+      text: String(message.text || "").slice(0, 1000),
+      timestamp: String(message.ts || ""),
+      url: String(message.permalink || ""),
+    }));
+  }
+  if (provider === "notion") {
+    const query = String(input.query || "")
+      .trim()
+      .slice(0, 300);
+    if (!query) throw new Error("Enter a Notion page search.");
+    const response = await fetchFn("https://api.notion.com/v1/search", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        "Notion-Version": "2025-09-03",
+      },
+      body: JSON.stringify({ query, page_size: 25 }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const payload = await response.json();
+    if (!response.ok)
+      throw new Error(`Notion returned ${response.status} for this search.`);
+    return (payload.results || []).slice(0, 25).map((item) => {
+      const title = Array.isArray(item.title)
+        ? item.title.map((part) => part?.plain_text || "").join("")
+        : item.properties?.title?.title
+            ?.map((part) => part?.plain_text || "")
+            .join("") || "Untitled page";
+      return {
+        id: String(item.id || ""),
+        type: String(item.object || "page"),
+        title: String(title || "Untitled page").slice(0, 500),
+        lastEdited: String(item.last_edited_time || ""),
+        url: String(item.url || ""),
+      };
+    });
+  }
+  if (provider === "vercel") {
+    const output = await commandFn("vercel", ["project", "ls", "--json"]);
+    if (!output)
+      throw new Error(
+        "Vercel could not read projects. Confirm that the local CLI is signed in.",
+      );
+    let payload;
+    try {
+      payload = JSON.parse(output);
+    } catch {
+      throw new Error("Vercel returned an unreadable project list.");
+    }
+    const projects = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload.projects)
+        ? payload.projects
+        : [];
+    return projects.slice(0, 25).map((project) => ({
+      id: String(project.id || project.uid || ""),
+      name: String(project.name || "Untitled project").slice(0, 300),
+      framework: String(project.framework || ""),
+      updatedAt: String(project.updatedAt || project.updated_at || ""),
+      url: String(project.link?.deploymentUrl || project.url || ""),
+    }));
+  }
+  if (provider === "supabase") {
+    const output = await commandFn("supabase", [
+      "projects",
+      "list",
+      "--output",
+      "json",
+    ]);
+    if (!output)
+      throw new Error(
+        "Supabase could not read projects. Confirm that the local CLI is signed in.",
+      );
+    let payload;
+    try {
+      payload = JSON.parse(output);
+    } catch {
+      throw new Error("Supabase returned an unreadable project list.");
+    }
+    const projects = Array.isArray(payload) ? payload : payload.projects || [];
+    return projects.slice(0, 25).map((project) => ({
+      id: String(project.id || project.ref || ""),
+      ref: String(project.ref || ""),
+      name: String(project.name || "Untitled project").slice(0, 300),
+      region: String(project.region || ""),
+      status: String(project.status || ""),
+      url: project.ref
+        ? `https://supabase.com/dashboard/project/${project.ref}`
+        : "",
+    }));
+  }
   throw new Error("This integration does not expose a direct read action yet.");
+}
+
+export async function runCodeRabbitReview(task, commandFn = commandOutput) {
+  const cwd = String(task.worktree_path || task.workspace || "");
+  if (!cwd)
+    throw new Error(
+      "CodeRabbit review needs a task with an isolated workspace.",
+    );
+  const output = await commandFn("coderabbit", ["review", "--agent"], {
+    cwd,
+    timeout: 10 * 60 * 1000,
+    maxBuffer: 500000,
+  });
+  if (!output)
+    throw new Error(
+      "CodeRabbit did not return a review. Confirm that its local CLI is signed in and has available usage.",
+    );
+  const records = String(output)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+  const findings = records.flatMap((record) =>
+    Array.isArray(record.findings)
+      ? record.findings
+      : Array.isArray(record.issues)
+        ? record.issues
+        : [],
+  );
+  const summary = records.length
+    ? `CodeRabbit returned ${records.length} structured result${records.length === 1 ? "" : "s"} with ${findings.length} finding${findings.length === 1 ? "" : "s"}.`
+    : "CodeRabbit returned a plain-text review result.";
+  return {
+    output: String(output).slice(0, 120000),
+    summary,
+    records: records.slice(0, 100),
+    findings: findings.slice(0, 200),
+  };
 }
 
 export async function refreshIntegrations(store, vault, options = {}) {

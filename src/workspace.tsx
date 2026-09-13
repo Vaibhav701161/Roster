@@ -348,19 +348,27 @@ function ProjectEnvironmentEditor({
 }
 function IntegrationReadPanel({
   integration,
+  profiles,
   act,
 }: {
   integration: State["integrations"][number];
+  profiles: State["projectProfiles"];
   act: Props["act"];
 }) {
   const [organization, setOrganization] = useState("");
   const [project, setProject] = useState("");
   const [query, setQuery] = useState("");
+  const [workspace, setWorkspace] = useState("");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
+  const nativeRead = ["sentry", "linear", "slack", "notion"].includes(
+    integration.provider,
+  );
+  const cliRead = ["vercel", "supabase"].includes(integration.provider);
   if (
-    !integration.credential_configured ||
-    !["sentry", "linear"].includes(integration.provider)
+    (!nativeRead && !cliRead) ||
+    (nativeRead && !integration.credential_configured) ||
+    (cliRead && integration.status !== "connected")
   )
     return null;
   return (
@@ -375,7 +383,7 @@ function IntegrationReadPanel({
             const response = await api<{ result: unknown }>(
               `/integrations/${integration.id}/read`,
               "POST",
-              { organization, project, query },
+              { organization, project, query, workspace },
             );
             setResult(JSON.stringify(response.result, null, 2));
             await act(async () => undefined);
@@ -403,14 +411,38 @@ function IntegrationReadPanel({
             </label>
           </div>
         )}
-        <label className="field">
-          {integration.provider === "sentry" ? "Issue filter" : "Issue search"}
-          <input
-            required={integration.provider === "linear"}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </label>
+        {!["vercel", "supabase"].includes(integration.provider) && (
+          <label className="field">
+            {integration.provider === "sentry"
+              ? "Issue filter"
+              : integration.provider === "linear"
+                ? "Issue search"
+                : integration.provider === "slack"
+                  ? "Message search"
+                  : "Page search"}
+            <input
+              required={integration.provider !== "sentry"}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+        )}
+        {profiles.length > 0 && (
+          <label className="field">
+            Project access context
+            <select
+              value={workspace}
+              onChange={(event) => setWorkspace(event.target.value)}
+            >
+              <option value="">No project selected</option>
+              {profiles.map((profile) => (
+                <option key={profile.workspace} value={profile.workspace}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <button className="text-button">Read current context</button>
       </form>
       {error && <small className="form-error">{error}</small>}
@@ -1253,7 +1285,11 @@ function SettingsView({ state, act, notify, refresh }: Props) {
                     act={act}
                     notify={notify}
                   />
-                  <IntegrationReadPanel integration={integration} act={act} />
+                  <IntegrationReadPanel
+                    integration={integration}
+                    profiles={state.projectProfiles}
+                    act={act}
+                  />
                   <SentryWatchEditor
                     integration={integration}
                     act={act}

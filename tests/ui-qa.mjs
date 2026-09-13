@@ -74,7 +74,20 @@ try {
   await page.goto(service.url);
   await page.locator(".welcome h1").waitFor();
   await scan("welcome");
+  await page.keyboard.press("Tab");
+  assert.equal(
+    await page.evaluate(
+      () => document.activeElement?.classList.contains("skip-link") || false,
+    ),
+    true,
+  );
   await page.getByRole("button", { name: "Add your first worker" }).click();
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Close", exact: true })
+      .evaluate((element) => document.activeElement === element),
+    true,
+  );
   await page
     .getByRole("button", { name: "Software Engineer", exact: true })
     .click();

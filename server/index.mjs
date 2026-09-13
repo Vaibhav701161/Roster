@@ -16,6 +16,7 @@ import {
   integrationTokenConfigured,
   readIntegration,
   refreshIntegrations,
+  runCodeRabbitReview,
   saveIntegrationToken,
   supportsIntegrationToken,
 } from "./integrations.mjs";
@@ -91,6 +92,7 @@ export async function createServer({
   runner,
   githubClient,
   integrationFetch,
+  integrationCommand,
 } = {}) {
   const releaseLock = acquireLock(directory);
   let store;
@@ -491,16 +493,21 @@ export async function createServer({
         workspace: z.string().max(1000).optional(),
       })
       .parse(req.body);
-    if (input.workspace) {
-      const scoped = JSON.parse(integration.workspace_scope_json || "[]");
-      if (scoped.length && !scoped.includes(workspace(input.workspace)))
-        throw new Error("This integration is not allowed for that project.");
-    }
+    const scoped = JSON.parse(integration.workspace_scope_json || "[]");
+    if (scoped.length && !input.workspace)
+      throw new Error("Select a project allowed for this integration.");
+    if (
+      input.workspace &&
+      scoped.length &&
+      !scoped.includes(workspace(input.workspace))
+    )
+      throw new Error("This integration is not allowed for that project.");
     const result = await readIntegration(
       integration.provider,
       vault,
       input,
       integrationFetch,
+      integrationCommand,
     );
     res.json({ result });
   });
@@ -1409,6 +1416,78 @@ export async function createServer({
     engine.event(task.id, "browser.verification", result.summary);
     changed();
     res.json({ ...result, evidenceId });
+  });
+  app.post("/api/tasks/:id/coderabbit-review", async (req, res) => {
+    const task = must("tasks", req.params.id);
+    if (task.kind !== "work" || task.status !== "completed")
+      throw new Error(
+        "Complete a coding task before requesting CodeRabbit review.",
+      );
+    if (!task.worktree_path)
+      throw new Error(
+        "CodeRabbit review requires this task's isolated worktree.",
+      );
+    const integration = store.one(
+      "SELECT * FROM integrations WHERE provider='coderabbit'",
+    );
+    if (
+      !integration ||
+      !["available", "connected"].includes(integration.status)
+    )
+      throw new Error(
+        "Connect the local CodeRabbit CLI before requesting review.",
+      );
+    const scopes = JSON.parse(integration.workspace_scope_json || "[]");
+    if (scopes.length && !scopes.includes(task.workspace))
+      throw new Error("CodeRabbit is not allowed for this task's project.");
+    const review = await runCodeRabbitReview(task, integrationCommand);
+    const outcome = store.one(
+      "SELECT id FROM outcome_contracts WHERE task_id=?",
+      [task.id],
+    );
+    const artifactId = id();
+    const evidenceId = id();
+    const artifactContent = JSON.stringify(
+      {
+        summary: review.summary,
+        findings: review.findings,
+        records: review.records,
+        output: review.output,
+      },
+      null,
+      2,
+    );
+    store.transaction(() => {
+      store.run(
+        "INSERT INTO artifacts(id,task_id,conversation_id,name,content,size,created_at) VALUES(?,?,?,?,?,?,?)",
+        [
+          artifactId,
+          task.id,
+          task.conversation_id,
+          "CodeRabbit independent review.json",
+          artifactContent,
+          Buffer.byteLength(artifactContent),
+          now(),
+        ],
+      );
+      store.run(
+        "INSERT INTO evidence(id,task_id,outcome_id,type,source,status,summary,artifact_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        [
+          evidenceId,
+          task.id,
+          outcome?.id || null,
+          "external_review",
+          "CodeRabbit CLI",
+          "observed",
+          review.summary,
+          artifactId,
+          now(),
+        ],
+      );
+    });
+    engine.event(task.id, "coderabbit.review", review.summary);
+    changed();
+    res.json({ evidenceId, artifactId, summary: review.summary });
   });
   app.get("/api/tasks/:id/receipt", (req, res) => {
     const task = must("tasks", req.params.id);

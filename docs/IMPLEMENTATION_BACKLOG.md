@@ -25,14 +25,14 @@ This document tracks the product work from the current engineering and messenger
 - [x] Publish an explicitly approved task branch as a GitHub pull request without force operations or automatic merges.
 - [x] Queue GitHub-driven owner repair and independent re-review in the existing isolated task branch.
 - [x] Run an explicitly selected browser or end-to-end project script as bounded task evidence without treating it as a review verdict.
-- [ ] Build the engineering integrations in priority order: GitHub, Sentry, Vercel, Playwright, CodeRabbit, Linear, Supabase/Postgres, Slack, and Notion.
+- [x] Build the engineering integrations in priority order: GitHub, Sentry, Vercel, Playwright, CodeRabbit, Linear, Supabase/Postgres, Slack, and Notion.
 - [x] Add continuous pull-request ownership monitoring and fact-based weekly receipts with Markdown export.
 - [x] Add an opt-in Sentry production-issue watch that baselines known issues and escalates only newly observed issues.
 
 ## Experience work
 
 - [x] Complete the WhatsApp-inspired messenger polish: richer worker identity, reply and reaction interactions, task and receipt cards, improved composer, contact-style roster navigation, and task-aware suggested replies.
-- [ ] Improve responsive desktop layouts, keyboard access, contrast, theme handling, and performance.
+- [x] Improve responsive desktop layouts, keyboard access, contrast, theme handling, and performance.
 
 ## Desktop platform work
 

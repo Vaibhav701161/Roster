@@ -812,6 +812,7 @@ export function TaskPanel({
     [runningBrowserCheck, setRunningBrowserCheck] = useState<string | null>(
       null,
     ),
+    [runningCodeRabbitReview, setRunningCodeRabbitReview] = useState(false),
     [mcpEvidence, setMcpEvidence] = useState<{
       connectionId: string;
       name: string;
@@ -820,6 +821,19 @@ export function TaskPanel({
     } | null>(null);
   const task =
     detail?.task.id === id ? detail.task : state.tasks.find((t) => t.id === id);
+  const codeRabbit = state.integrations.find(
+    (integration) => integration.provider === "coderabbit",
+  );
+  const codeRabbitAllowed = (() => {
+    if (!task || !codeRabbit) return false;
+    if (!["available", "connected"].includes(codeRabbit.status)) return false;
+    try {
+      const scopes = JSON.parse(codeRabbit.workspace_scope_json || "[]");
+      return !scopes.length || scopes.includes(task.workspace);
+    } catch {
+      return false;
+    }
+  })();
   const evidenceConnections = task
     ? state.mcpConnections.filter((connection) => {
         try {
@@ -976,6 +990,40 @@ export function TaskPanel({
                 ))}
               </section>
             )}
+            {task.status === "completed" &&
+              task.worktree_path &&
+              codeRabbitAllowed && (
+                <section
+                  className="task-github-ownership"
+                  aria-label="CodeRabbit review"
+                >
+                  <h3>External code review</h3>
+                  <p className="muted-note">
+                    Run CodeRabbit against this task's isolated change. It can
+                    consume CodeRabbit account usage. Its result is saved as
+                    attributed evidence and does not mark the work verified.
+                  </p>
+                  <button
+                    className="secondary"
+                    disabled={runningCodeRabbitReview}
+                    onClick={async () => {
+                      setRunningCodeRabbitReview(true);
+                      try {
+                        await act(() =>
+                          api(`/tasks/${id}/coderabbit-review`, "POST", {}),
+                        );
+                        setDetail(await api<TaskDetail>(`/tasks/${id}`));
+                      } finally {
+                        setRunningCodeRabbitReview(false);
+                      }
+                    }}
+                  >
+                    {runningCodeRabbitReview
+                      ? "Running CodeRabbit review…"
+                      : "Run CodeRabbit review"}
+                  </button>
+                </section>
+              )}
             {task.status === "completed" && evidenceTools.length > 0 && (
               <section
                 className="task-github-ownership"
