@@ -14,6 +14,7 @@ import { acquireLock } from "./lock.mjs";
 import { integrationCheck, taskInspection } from "./worktree.mjs";
 import { refreshIntegrations } from "./integrations.mjs";
 import { inspectProject, saveProjectProfile } from "./projects.mjs";
+import { detectedBrowserScripts, runBrowserScript } from "./browser.mjs";
 import {
   callLocalMcpTool,
   callMcpTool,
@@ -745,6 +746,105 @@ export async function createServer({
         reason: "Git changes are available for Git project folders.",
       });
     }
+  });
+  app.get("/api/tasks/:id/browser-checks", (req, res) => {
+    const task = must("tasks", req.params.id);
+    res.json({
+      scripts: detectedBrowserScripts(task.worktree_path || task.workspace),
+    });
+  });
+  app.post("/api/tasks/:id/browser-check", async (req, res) => {
+    const task = must("tasks", req.params.id);
+    if (task.status !== "completed")
+      throw new Error("Complete the work before running browser verification.");
+    const owner = task.owner_id ? must("agents", task.owner_id) : null;
+    if (owner?.permission_level === "read_only")
+      throw new Error(
+        "This worker is read-only and cannot run a browser check.",
+      );
+    const { script } = z
+      .object({ script: z.string().trim().min(1).max(100) })
+      .parse(req.body);
+    const result = await runBrowserScript(task, script);
+    const outcome = store.one(
+      "SELECT * FROM outcome_contracts WHERE task_id=?",
+      [task.id],
+    );
+    const evidenceId = id();
+    store.transaction(() => {
+      const artifactId = id();
+      store.run(
+        "INSERT INTO artifacts(id,task_id,conversation_id,name,content,size,created_at) VALUES(?,?,?,?,?,?,?)",
+        [
+          artifactId,
+          task.id,
+          task.conversation_id,
+          `${script} browser verification.txt`,
+          result.output,
+          Buffer.byteLength(result.output),
+          now(),
+        ],
+      );
+      if (outcome) {
+        let criterion = store.one(
+          "SELECT * FROM acceptance_criteria WHERE outcome_id=? AND type='browser' AND command=?",
+          [outcome.id, result.command],
+        );
+        if (!criterion) {
+          store.run(
+            "INSERT INTO acceptance_criteria(id,outcome_id,type,description,command,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            [
+              id(),
+              outcome.id,
+              "browser",
+              `Browser verification: ${script}`,
+              result.command,
+              now(),
+              now(),
+            ],
+          );
+          criterion = store.one(
+            "SELECT * FROM acceptance_criteria WHERE outcome_id=? AND type='browser' AND command=?",
+            [outcome.id, result.command],
+          );
+          store.run(
+            "UPDATE outcome_contracts SET status='verifying',updated_at=? WHERE id=?",
+            [now(), outcome.id],
+          );
+          store.run("UPDATE tasks SET verification='unverified' WHERE id=?", [
+            task.id,
+          ]);
+          store.run("DELETE FROM work_receipts WHERE task_id=?", [task.id]);
+        }
+        store.run(
+          "INSERT INTO evidence(id,task_id,outcome_id,type,source,status,summary,artifact_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+          [
+            evidenceId,
+            task.id,
+            outcome.id,
+            "browser",
+            `Browser script: ${script}`,
+            result.status,
+            result.summary,
+            artifactId,
+            now(),
+          ],
+        );
+        store.run(
+          "UPDATE acceptance_criteria SET status=?,evidence_id=?,updated_at=? WHERE id=?",
+          [result.status, evidenceId, now(), criterion.id],
+        );
+        if (result.status === "pass") settleOutcome(outcome, result.summary);
+        else
+          store.run(
+            "UPDATE outcome_contracts SET status='verifying',updated_at=? WHERE id=?",
+            [now(), outcome.id],
+          );
+      }
+    });
+    engine.event(task.id, "browser.verification", result.summary);
+    changed();
+    res.json({ ...result, evidenceId });
   });
   app.get("/api/tasks/:id/receipt", (req, res) => {
     const task = must("tasks", req.params.id);

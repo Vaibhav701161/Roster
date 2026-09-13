@@ -1416,6 +1416,61 @@ test("independent review criteria cannot be self-recorded", async () => {
   }
 });
 
+test("detected browser scripts create bounded verification evidence", async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "roster-browser-"));
+  fs.writeFileSync(
+    path.join(workspace, "package.json"),
+    JSON.stringify({ scripts: { "test:e2e": "node browser-check.mjs" } }),
+  );
+  fs.writeFileSync(
+    path.join(workspace, "browser-check.mjs"),
+    'console.log("browser flow passed")',
+  );
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex", { workspace }));
+    await f.request(`/conversations/${a.conversationId}/messages`, "POST", {
+      content: "Fix the sample issue.",
+    });
+    const task = await until(() =>
+      f.app.store.one("SELECT * FROM tasks WHERE status='completed'"),
+    );
+    const checks = await f.request(`/tasks/${task.id}/browser-checks`);
+    assert.deepEqual(
+      checks.scripts.map((item) => item.name),
+      ["test:e2e"],
+    );
+    const run = await f.request(`/tasks/${task.id}/browser-check`, "POST", {
+      script: "test:e2e",
+    });
+    assert.match(run.output, /browser flow passed/);
+    assert.equal(
+      f.app.store.one(
+        "SELECT c.status FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=? AND c.type='browser'",
+        [task.id],
+      ).status,
+      "pass",
+    );
+    assert.match(
+      f.app.store.one(
+        "SELECT summary FROM evidence WHERE task_id=? AND type='browser'",
+        [task.id],
+      ).summary,
+      /completed successfully/,
+    );
+    assert.match(
+      f.app.store.one(
+        "SELECT content FROM artifacts WHERE task_id=? AND name=?",
+        [task.id, "test:e2e browser verification.txt"],
+      ).content,
+      /browser flow passed/,
+    );
+  } finally {
+    await f.app.close();
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
 test("a late acceptance criterion refreshes and then restores the work receipt", async () => {
   const f = await fixture(async () => ({ text: "response" }));
   try {

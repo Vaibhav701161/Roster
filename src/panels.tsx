@@ -762,7 +762,13 @@ export function TaskPanel({
     [recordingCriterion, setRecordingCriterion] = useState<string | null>(null),
     [criterionEvidence, setCriterionEvidence] = useState(""),
     [pullRequest, setPullRequest] = useState(""),
-    [trackingPullRequest, setTrackingPullRequest] = useState(false);
+    [trackingPullRequest, setTrackingPullRequest] = useState(false),
+    [browserChecks, setBrowserChecks] = useState<
+      { name: string; command: string }[]
+    >([]),
+    [runningBrowserCheck, setRunningBrowserCheck] = useState<string | null>(
+      null,
+    );
   const task =
     detail?.task.id === id ? detail.task : state.tasks.find((t) => t.id === id);
   useEffect(() => {
@@ -775,6 +781,13 @@ export function TaskPanel({
     api(`/tasks/${id}/inspection`)
       .then((result) => {
         if (!cancelled) setInspection(result as typeof inspection);
+      })
+      .catch(() => {});
+    api<{ scripts: { name: string; command: string }[] }>(
+      `/tasks/${id}/browser-checks`,
+    )
+      .then((result) => {
+        if (!cancelled) setBrowserChecks(result.scripts);
       })
       .catch(() => {});
     return () => {
@@ -847,6 +860,42 @@ export function TaskPanel({
               >
                 Prepare integration patch
               </button>
+            )}
+            {task.status === "completed" && browserChecks.length > 0 && (
+              <section
+                className="task-github-ownership"
+                aria-label="Browser verification"
+              >
+                <h3>Browser verification</h3>
+                <p className="muted-note">
+                  Run a detected browser or end-to-end script and retain its
+                  output as task evidence.
+                </p>
+                {browserChecks.map((check) => (
+                  <button
+                    className="secondary"
+                    key={check.name}
+                    disabled={!!runningBrowserCheck}
+                    onClick={async () => {
+                      setRunningBrowserCheck(check.name);
+                      try {
+                        await act(() =>
+                          api(`/tasks/${id}/browser-check`, "POST", {
+                            script: check.name,
+                          }),
+                        );
+                        setDetail(await api<TaskDetail>(`/tasks/${id}`));
+                      } finally {
+                        setRunningBrowserCheck(null);
+                      }
+                    }}
+                  >
+                    {runningBrowserCheck === check.name
+                      ? "Running browser checkâ€¦"
+                      : `Run ${check.name}`}
+                  </button>
+                ))}
+              </section>
             )}
             {task.repository && (
               <section
