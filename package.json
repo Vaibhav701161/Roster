@@ -1,6 +1,6 @@
 {
   "name": "roster",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "description": "A local-first desktop messenger for persistent AI workers.",
   "author": "Roster contributors",
   "desktopName": "roster",
