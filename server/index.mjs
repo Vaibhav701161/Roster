@@ -373,6 +373,19 @@ export async function createServer({
     changed();
     res.json(connection);
   });
+  app.put("/api/mcp/:id/scopes", (req, res) => {
+    const connection = must("mcp_connections", req.params.id);
+    const { workspaces } = z
+      .object({ workspaces: z.array(z.string().max(1000)).max(20) })
+      .parse(req.body);
+    const scopes = [...new Set(workspaces.filter(Boolean).map(workspace))];
+    store.run(
+      "UPDATE mcp_connections SET workspace_scope_json=?,updated_at=? WHERE id=?",
+      [JSON.stringify(scopes), now(), connection.id],
+    );
+    changed();
+    res.json({ ...connection, workspace_scope_json: JSON.stringify(scopes) });
+  });
   app.post("/api/mcp/:id/tools/call", async (req, res) => {
     const connection = must("mcp_connections", req.params.id);
     if (connection.status !== "available")
@@ -381,8 +394,19 @@ export async function createServer({
       .object({
         name: z.string().trim().min(1).max(200),
         arguments: z.record(z.string(), z.unknown()).default({}),
+        workspace: z.string().max(1000).default(""),
       })
       .parse(req.body);
+    const scopes = JSON.parse(connection.workspace_scope_json || "[]");
+    if (scopes.length) {
+      const requestedWorkspace = body.workspace
+        ? workspace(body.workspace)
+        : "";
+      if (!scopes.includes(requestedWorkspace))
+        throw new Error(
+          "Choose a workspace that this MCP server is explicitly connected to.",
+        );
+    }
     const tools = JSON.parse(connection.tools_json || "[]");
     if (!tools.some((tool) => tool.name === body.name))
       throw new Error(

@@ -129,6 +129,11 @@ export async function openStore(directory) {
       ALTER TABLE mcp_connections ADD COLUMN stdio_json TEXT NOT NULL DEFAULT '{}';
       INSERT INTO migration VALUES(14,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=15")) {
+    db.exec(`BEGIN;
+      ALTER TABLE mcp_connections ADD COLUMN workspace_scope_json TEXT NOT NULL DEFAULT '[]';
+      INSERT INTO migration VALUES(15,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

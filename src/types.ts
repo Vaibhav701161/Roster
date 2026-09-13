@@ -135,6 +135,7 @@ export type McpConnection = {
   tools_json: string;
   transport: "remote" | "stdio";
   stdio_json: string;
+  workspace_scope_json: string;
   updated_at: string;
 };
 export type ProjectProfile = {

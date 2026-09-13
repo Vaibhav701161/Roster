@@ -981,6 +981,15 @@ test("MCP discovery records public capabilities and authorization metadata witho
     assert.equal(publicServer.serverName, "Local MCP");
     assert.deepEqual(publicServer.capabilities, ["tools"]);
     assert.equal(publicServer.tools[0].name, "issues.read");
+    const scopedWorkspace = fs.mkdtempSync(
+      path.join(os.tmpdir(), "roster-mcp-scope-"),
+    );
+    const scoped = await f.request(`/mcp/${publicServer.id}/scopes`, "PUT", {
+      workspaces: [scopedWorkspace],
+    });
+    assert.deepEqual(JSON.parse(scoped.workspace_scope_json), [
+      scopedWorkspace,
+    ]);
     const state = await f.request("/state");
     assert.equal(state.mcpConnections.length, 2);
     assert.equal(
@@ -994,7 +1003,11 @@ test("MCP discovery records public capabilities and authorization metadata witho
     const toolCall = await f.request(
       `/mcp/${publicServer.id}/tools/call`,
       "POST",
-      { name: "issues.read", arguments: { issue: 42 } },
+      {
+        name: "issues.read",
+        arguments: { issue: 42 },
+        workspace: scopedWorkspace,
+      },
     );
     assert.equal(toolCall.result.content[0].text, "Issue 42 is open.");
     assert.deepEqual(
@@ -1009,8 +1022,17 @@ test("MCP discovery records public capabilities and authorization metadata witho
     await assert.rejects(
       () =>
         f.request(`/mcp/${publicServer.id}/tools/call`, "POST", {
+          name: "issues.read",
+          arguments: { issue: 42 },
+        }),
+      /explicitly connected/,
+    );
+    await assert.rejects(
+      () =>
+        f.request(`/mcp/${publicServer.id}/tools/call`, "POST", {
           name: "not-in-registry",
           arguments: {},
+          workspace: scopedWorkspace,
         }),
       /discovered registry/,
     );

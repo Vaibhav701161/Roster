@@ -34,6 +34,70 @@ type Props = {
   onTask: (id: string) => void;
   notify: (s: string) => void;
 };
+const workspaceScopes = (value: string) => {
+  try {
+    const scopes = JSON.parse(value || "[]");
+    return Array.isArray(scopes)
+      ? scopes.filter((item) => typeof item === "string")
+      : [];
+  } catch {
+    return [];
+  }
+};
+function McpScopeEditor({
+  connectionId,
+  scopeJson,
+  profiles,
+  act,
+}: {
+  connectionId: string;
+  scopeJson: string;
+  profiles: State["projectProfiles"];
+  act: Props["act"];
+}) {
+  const [scopes, setScopes] = useState(() => workspaceScopes(scopeJson));
+  useEffect(() => setScopes(workspaceScopes(scopeJson)), [scopeJson]);
+  return (
+    <details>
+      <summary>Project access</summary>
+      <small>
+        Limit this server to selected saved project profiles. Leave empty to
+        keep it available globally.
+      </small>
+      {profiles.length ? (
+        <form
+          className="field"
+          onSubmit={(event) => {
+            event.preventDefault();
+            act(() =>
+              api(`/mcp/${connectionId}/scopes`, "PUT", { workspaces: scopes }),
+            );
+          }}
+        >
+          {profiles.map((profile) => (
+            <label key={profile.workspace}>
+              <input
+                type="checkbox"
+                checked={scopes.includes(profile.workspace)}
+                onChange={(event) =>
+                  setScopes((current) =>
+                    event.target.checked
+                      ? [...new Set([...current, profile.workspace])]
+                      : current.filter((scope) => scope !== profile.workspace),
+                  )
+                }
+              />
+              {profile.name}
+            </label>
+          ))}
+          <button className="text-button">Save project access</button>
+        </form>
+      ) : (
+        <small>Save a project profile before assigning project access.</small>
+      )}
+    </details>
+  );
+}
 export default function WorkspaceView(p: Props) {
   const { view, state, act, openChat, onWorker, onTeam, onTask } = p;
   const [query, setQuery] = useState(""),
@@ -611,6 +675,7 @@ function SettingsView({ state, act, notify }: Props) {
       connectionId: string;
       name: string;
       argumentsText: string;
+      workspace: string;
       result: string;
       error: string;
     } | null>(null);
@@ -864,6 +929,10 @@ function SettingsView({ state, act, notify }: Props) {
                               connectionId: connection.id,
                               name: tool.name,
                               argumentsText: "{}",
+                              workspace:
+                                workspaceScopes(
+                                  connection.workspace_scope_json,
+                                )[0] || "",
                               result: "",
                               error: "",
                             })
@@ -874,6 +943,12 @@ function SettingsView({ state, act, notify }: Props) {
                       ))}
                     </details>
                   ) : null}
+                  <McpScopeEditor
+                    connectionId={connection.id}
+                    scopeJson={connection.workspace_scope_json}
+                    profiles={state.projectProfiles}
+                    act={act}
+                  />
                 </div>
                 <span className="status-pill">
                   {statusLabel[connection.status] || connection.status}
@@ -897,7 +972,11 @@ function SettingsView({ state, act, notify }: Props) {
                   const response = await api<{ result: unknown }>(
                     `/mcp/${mcpTool.connectionId}/tools/call`,
                     "POST",
-                    { name: mcpTool.name, arguments: argumentsValue },
+                    {
+                      name: mcpTool.name,
+                      arguments: argumentsValue,
+                      workspace: mcpTool.workspace,
+                    },
                   );
                   setMcpTool({
                     ...mcpTool,
@@ -924,6 +1003,33 @@ function SettingsView({ state, act, notify }: Props) {
                   setMcpTool({ ...mcpTool, argumentsText: event.target.value })
                 }
               />
+              {workspaceScopes(
+                state.mcpConnections.find(
+                  (connection) => connection.id === mcpTool.connectionId,
+                )?.workspace_scope_json || "[]",
+              ).length > 0 && (
+                <label className="field">
+                  Project access
+                  <select
+                    value={mcpTool.workspace}
+                    onChange={(event) =>
+                      setMcpTool({ ...mcpTool, workspace: event.target.value })
+                    }
+                  >
+                    {workspaceScopes(
+                      state.mcpConnections.find(
+                        (connection) => connection.id === mcpTool.connectionId,
+                      )?.workspace_scope_json || "[]",
+                    ).map((scope) => (
+                      <option key={scope} value={scope}>
+                        {state.projectProfiles.find(
+                          (profile) => profile.workspace === scope,
+                        )?.name || scope}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <button className="secondary">Run tool</button>
               <button
                 className="text-button"
