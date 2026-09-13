@@ -129,6 +129,40 @@ export async function createServer({
       throw new Error("This item no longer exists. Refresh to continue.");
     return row;
   };
+  const settleOutcome = (outcome, evidence = "") => {
+    const remaining = store.one(
+      "SELECT COUNT(*) count FROM acceptance_criteria WHERE outcome_id=? AND status!='pass'",
+      [outcome.id],
+    ).count;
+    const status = remaining ? "verifying" : "satisfied";
+    store.run("UPDATE outcome_contracts SET status=?,updated_at=? WHERE id=?", [
+      status,
+      now(),
+      outcome.id,
+    ]);
+    if (remaining) return false;
+    const task = must("tasks", outcome.task_id);
+    const receipt = store.one("SELECT id FROM work_receipts WHERE task_id=?", [
+      task.id,
+    ]);
+    if (!receipt) {
+      const review = store.one(
+        "SELECT summary FROM review_verdicts WHERE task_id=? AND verdict='pass'",
+        [task.id],
+      );
+      store.run(
+        "INSERT INTO work_receipts(id,task_id,outcome_id,content,created_at) VALUES(?,?,?,?,?)",
+        [
+          id(),
+          task.id,
+          outcome.id,
+          `# ${task.title}\n\nOutcome completed.\n\nVerification: all recorded acceptance criteria passed.${review ? `\n\nIndependent review: ${review.summary}` : ""}${evidence ? `\n\nLatest evidence: ${evidence}` : ""}`,
+          now(),
+        ],
+      );
+    }
+    return true;
+  };
   function snapshot() {
     const tasks = store.all(
       "SELECT id,conversation_id,message_id,owner_id,title,status,kind,workspace,error,verification,created_at,started_at,completed_at,'' result,'' objective,root_task_id,repository,base_commit,branch,worktree_path,(SELECT COUNT(*) FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=tasks.id) criteria_total,(SELECT COUNT(*) FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=tasks.id AND c.status='pass') criteria_passed,EXISTS(SELECT 1 FROM work_receipts r WHERE r.task_id=tasks.id) has_receipt FROM tasks ORDER BY CASE WHEN status IN ('running','waiting_approval','queued','waiting_dependency') THEN 0 ELSE 1 END,created_at DESC LIMIT 500",
@@ -784,11 +818,39 @@ export async function createServer({
     const b = z
       .object({ evidence: z.string().trim().min(10).max(3000) })
       .parse(req.body);
-    store.run("UPDATE tasks SET verification='verified' WHERE id=?", [t.id]);
+    const outcome = store.one(
+      "SELECT * FROM outcome_contracts WHERE task_id=?",
+      [t.id],
+    );
+    store.transaction(() => {
+      store.run("UPDATE tasks SET verification='verified' WHERE id=?", [t.id]);
+      if (outcome) {
+        const evidenceId = id();
+        store.run(
+          "INSERT INTO evidence(id,task_id,outcome_id,type,source,status,summary,created_at) VALUES(?,?,?,?,?,?,?,?)",
+          [
+            evidenceId,
+            t.id,
+            outcome.id,
+            "manual",
+            "user",
+            "pass",
+            b.evidence,
+            now(),
+          ],
+        );
+        store.run(
+          "UPDATE acceptance_criteria SET status='pass',evidence_id=?,updated_at=? WHERE outcome_id=? AND type='manual' AND status='pending'",
+          [evidenceId, now(), outcome.id],
+        );
+        settleOutcome(outcome, b.evidence);
+      }
+    });
     engine.event(t.id, "verification.confirmed", {
       source: "user",
       evidence: b.evidence,
     });
+    changed();
     res.json({ ok: true });
   });
   app.post("/api/outcomes/:id/criteria", (req, res) => {
@@ -823,10 +885,16 @@ export async function createServer({
         now(),
       ],
     );
-    store.run("UPDATE outcome_contracts SET updated_at=? WHERE id=?", [
-      now(),
-      outcome.id,
-    ]);
+    store.transaction(() => {
+      store.run(
+        "UPDATE outcome_contracts SET status='verifying',updated_at=? WHERE id=?",
+        [now(), outcome.id],
+      );
+      store.run("UPDATE tasks SET verification='unverified' WHERE id=?", [
+        outcome.task_id,
+      ]);
+      store.run("DELETE FROM work_receipts WHERE task_id=?", [outcome.task_id]);
+    });
     changed();
     res.json({ ok: true });
   });
@@ -858,10 +926,7 @@ export async function createServer({
         "UPDATE acceptance_criteria SET status=?,evidence_id=?,updated_at=? WHERE id=?",
         [body.status, evidenceId, now(), criterion.id],
       );
-      store.run("UPDATE outcome_contracts SET updated_at=? WHERE id=?", [
-        now(),
-        outcome.id,
-      ]);
+      settleOutcome(outcome, body.evidence);
     });
     changed();
     res.json({ ok: true });

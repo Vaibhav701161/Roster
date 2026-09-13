@@ -1383,6 +1383,84 @@ test("criterion evidence is retained as outcome evidence", async () => {
   }
 });
 
+test("a late acceptance criterion refreshes and then restores the work receipt", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    await f.request(`/conversations/${a.conversationId}/messages`, "POST", {
+      content: "Fix the sample issue.",
+    });
+    const task = await until(() =>
+      f.app.store.one("SELECT * FROM tasks WHERE status='completed'"),
+    );
+    const outcome = f.app.store.one(
+      "SELECT * FROM outcome_contracts WHERE task_id=?",
+      [task.id],
+    );
+    f.app.store.transaction(() => {
+      f.app.store.run(
+        "UPDATE acceptance_criteria SET status='pass' WHERE outcome_id=?",
+        [outcome.id],
+      );
+      f.app.store.run(
+        "UPDATE outcome_contracts SET status='satisfied' WHERE id=?",
+        [outcome.id],
+      );
+      f.app.store.run("UPDATE tasks SET verification='verified' WHERE id=?", [
+        task.id,
+      ]);
+      f.app.store.run(
+        "INSERT INTO work_receipts(id,task_id,outcome_id,content,created_at) VALUES(?,?,?,?,?)",
+        [
+          "00000000-0000-4000-8000-000000000301",
+          task.id,
+          outcome.id,
+          "old",
+          new Date().toISOString(),
+        ],
+      );
+    });
+    await f.request(`/outcomes/${outcome.id}/criteria`, "POST", {
+      type: "test",
+      description: "The focused regression passes",
+    });
+    assert.equal(
+      f.app.store.one("SELECT status FROM outcome_contracts WHERE id=?", [
+        outcome.id,
+      ]).status,
+      "verifying",
+    );
+    assert.equal(
+      f.app.store.one("SELECT id FROM work_receipts WHERE task_id=?", [
+        task.id,
+      ]),
+      undefined,
+    );
+    const criterion = f.app.store.one(
+      "SELECT * FROM acceptance_criteria WHERE outcome_id=? AND description=?",
+      [outcome.id, "The focused regression passes"],
+    );
+    await f.request(`/criteria/${criterion.id}/record`, "POST", {
+      status: "pass",
+      evidence: "The focused regression passed successfully.",
+    });
+    assert.equal(
+      f.app.store.one("SELECT status FROM outcome_contracts WHERE id=?", [
+        outcome.id,
+      ]).status,
+      "satisfied",
+    );
+    assert.match(
+      f.app.store.one("SELECT content FROM work_receipts WHERE task_id=?", [
+        task.id,
+      ]).content,
+      /focused regression passed successfully/,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
 test(
   "Windows secret persistence uses DPAPI and does not store the cleartext key",
   { skip: process.platform !== "win32" },

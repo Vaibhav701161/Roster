@@ -857,13 +857,18 @@ export function createEngine(
               ]);
             if (outcome) {
               store.run(
-                "UPDATE outcome_contracts SET status='satisfied',updated_at=? WHERE id=?",
+                "UPDATE acceptance_criteria SET status='pass',updated_at=? WHERE outcome_id=? AND type IN ('manual','review')",
                 [now(), outcome.id],
               );
+              const remaining = store.one(
+                "SELECT COUNT(*) count FROM acceptance_criteria WHERE outcome_id=? AND status!='pass'",
+                [outcome.id],
+              ).count;
               store.run(
-                "UPDATE acceptance_criteria SET status='pass',updated_at=? WHERE outcome_id=? AND type='review'",
-                [now(), outcome.id],
+                "UPDATE outcome_contracts SET status=?,updated_at=? WHERE id=?",
+                [remaining ? "verifying" : "satisfied", now(), outcome.id],
               );
+              if (remaining) continue;
             }
             store.run(
               "INSERT OR REPLACE INTO work_receipts(id,task_id,outcome_id,content,created_at) VALUES(?,?,?,?,?)",

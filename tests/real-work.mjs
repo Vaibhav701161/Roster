@@ -149,6 +149,11 @@ try {
   );
   assert.equal(main.verification, "verified");
   assert.ok(main.has_receipt, "The verified task has a durable work receipt.");
+  assert.equal(
+    main.criteria_passed,
+    main.criteria_total,
+    "A review-backed default outcome records all of its completion criteria.",
+  );
   const checks = execFileSync(process.execPath, ["test.mjs"], {
     cwd: main.worktree_path,
     encoding: "utf8",
