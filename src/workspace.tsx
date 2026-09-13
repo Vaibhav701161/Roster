@@ -227,6 +227,288 @@ function IntegrationTokenEditor({
     </details>
   );
 }
+function ProjectEnvironmentEditor({
+  profile,
+  act,
+  notify,
+}: {
+  profile: State["projectProfiles"][number];
+  act: Props["act"];
+  notify: Props["notify"];
+}) {
+  const empty = {
+    setup: [] as string[],
+    filesToCopy: [] as string[],
+    devCommand: "",
+    testCommand: "",
+    buildCommand: "",
+  };
+  const [value, setValue] = useState(profile.environment || empty);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(
+    () => setValue(profile.environment || empty),
+    [profile.environment],
+  );
+  const lines = (text: string) =>
+    text
+      .split("\n")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  const save = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    try {
+      await act(() =>
+        api("/projects/environment", "PUT", {
+          workspace: profile.workspace,
+          ...value,
+        }),
+      );
+      notify(`${profile.name} environment saved.`);
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <details className="provider-detail">
+      <summary>{profile.name} environment</summary>
+      <small>{profile.workspace}</small>
+      <form className="form-body" onSubmit={save}>
+        <label className="field">
+          Setup commands
+          <textarea
+            aria-label={`${profile.name} setup commands`}
+            maxLength={10000}
+            placeholder="One command per line"
+            value={value.setup.join("\n")}
+            onChange={(event) =>
+              setValue({ ...value, setup: lines(event.target.value) })
+            }
+          />
+        </label>
+        <label className="field">
+          Files to copy into isolated worktrees
+          <textarea
+            aria-label={`${profile.name} files to copy`}
+            maxLength={6000}
+            placeholder=".env.local"
+            value={value.filesToCopy.join("\n")}
+            onChange={(event) =>
+              setValue({ ...value, filesToCopy: lines(event.target.value) })
+            }
+          />
+        </label>
+        <div className="form-row">
+          <label className="field">
+            Development command
+            <input
+              maxLength={1000}
+              value={value.devCommand}
+              onChange={(event) =>
+                setValue({ ...value, devCommand: event.target.value })
+              }
+            />
+          </label>
+          <label className="field">
+            Test command
+            <input
+              maxLength={1000}
+              value={value.testCommand}
+              onChange={(event) =>
+                setValue({ ...value, testCommand: event.target.value })
+              }
+            />
+          </label>
+        </div>
+        <label className="field">
+          Build command
+          <input
+            maxLength={1000}
+            value={value.buildCommand}
+            onChange={(event) =>
+              setValue({ ...value, buildCommand: event.target.value })
+            }
+          />
+        </label>
+        <small>
+          Roster detects these values but never runs setup or copies files until
+          a worker requests an approved action in its isolated workspace.
+        </small>
+        <button className="text-button" disabled={saving}>
+          {saving ? "Saving..." : "Save environment"}
+        </button>
+        {error && <small className="form-error">{error}</small>}
+      </form>
+    </details>
+  );
+}
+function IntegrationReadPanel({
+  integration,
+  act,
+}: {
+  integration: State["integrations"][number];
+  act: Props["act"];
+}) {
+  const [organization, setOrganization] = useState("");
+  const [project, setProject] = useState("");
+  const [query, setQuery] = useState("");
+  const [result, setResult] = useState("");
+  const [error, setError] = useState("");
+  if (
+    !integration.credential_configured ||
+    !["sentry", "linear"].includes(integration.provider)
+  )
+    return null;
+  return (
+    <details>
+      <summary>Read project context</summary>
+      <form
+        className="field"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setError("");
+          try {
+            const response = await api<{ result: unknown }>(
+              `/integrations/${integration.id}/read`,
+              "POST",
+              { organization, project, query },
+            );
+            setResult(JSON.stringify(response.result, null, 2));
+            await act(async () => undefined);
+          } catch (reason) {
+            setError((reason as Error).message);
+          }
+        }}
+      >
+        {integration.provider === "sentry" && (
+          <div className="form-row">
+            <label className="field">
+              Organization
+              <input
+                required
+                value={organization}
+                onChange={(event) => setOrganization(event.target.value)}
+              />
+            </label>
+            <label className="field">
+              Project ID or slug
+              <input
+                value={project}
+                onChange={(event) => setProject(event.target.value)}
+              />
+            </label>
+          </div>
+        )}
+        <label className="field">
+          {integration.provider === "sentry" ? "Issue filter" : "Issue search"}
+          <input
+            required={integration.provider === "linear"}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+        <button className="text-button">Read current context</button>
+      </form>
+      {error && <small className="form-error">{error}</small>}
+      {result && <pre>{result}</pre>}
+    </details>
+  );
+}
+function SentryWatchEditor({
+  integration,
+  act,
+  notify,
+}: {
+  integration: State["integrations"][number];
+  act: Props["act"];
+  notify: Props["notify"];
+}) {
+  const [organization, setOrganization] = useState("");
+  const [project, setProject] = useState("");
+  const [query, setQuery] = useState("");
+  if (integration.provider !== "sentry" || !integration.credential_configured)
+    return null;
+  return (
+    <details>
+      <summary>Watch production problems</summary>
+      <small>
+        Roster establishes a baseline, then adds newly observed issues to Needs
+        You. It will not edit code, deploy, or close Sentry issues.
+      </small>
+      <form
+        className="field"
+        onSubmit={(event) => {
+          event.preventDefault();
+          act(() =>
+            api(`/integrations/${integration.id}/sentry-watch`, "PUT", {
+              enabled: true,
+              organization,
+              project,
+              query,
+            }),
+          ).then(() => notify("Sentry issue watch saved."));
+        }}
+      >
+        <label className="field">
+          Organization
+          <input
+            required
+            value={organization}
+            onChange={(event) => setOrganization(event.target.value)}
+          />
+        </label>
+        <label className="field">
+          Project ID or slug
+          <input
+            value={project}
+            onChange={(event) => setProject(event.target.value)}
+          />
+        </label>
+        <label className="field">
+          Issue filter
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+        <button className="text-button">Start watch</button>
+      </form>
+      <button
+        className="text-button"
+        type="button"
+        onClick={() =>
+          act(() =>
+            api(`/integrations/${integration.id}/sentry-watch`, "PUT", {
+              enabled: false,
+              organization: "",
+            }),
+          ).then(() => notify("Sentry issue watch stopped."))
+        }
+      >
+        Stop watch
+      </button>
+      <button
+        className="text-button"
+        type="button"
+        onClick={() =>
+          act(() =>
+            api(
+              `/integrations/${integration.id}/sentry-watch/check`,
+              "POST",
+              {},
+            ),
+          ).then(() => notify("Sentry issue watch checked."))
+        }
+      >
+        Check now
+      </button>
+    </details>
+  );
+}
 export default function WorkspaceView(p: Props) {
   const {
     view,
@@ -971,6 +1253,12 @@ function SettingsView({ state, act, notify, refresh }: Props) {
                     act={act}
                     notify={notify}
                   />
+                  <IntegrationReadPanel integration={integration} act={act} />
+                  <SentryWatchEditor
+                    integration={integration}
+                    act={act}
+                    notify={notify}
+                  />
                 </div>
                 <span className="status-pill">
                   {statusLabel[integration.status] || integration.status}
@@ -985,6 +1273,23 @@ function SettingsView({ state, act, notify, refresh }: Props) {
             <RefreshCw size={13} /> Refresh integrations
           </button>
         </section>
+        {state.projectProfiles.length > 0 && (
+          <section className="settings-section">
+            <h2>Project environments</h2>
+            <p>
+              Roster detected these local setup recipes when you saved each
+              project. Adjust them here before assigning isolated work.
+            </p>
+            {state.projectProfiles.map((profile) => (
+              <ProjectEnvironmentEditor
+                key={profile.workspace}
+                profile={profile}
+                act={act}
+                notify={notify}
+              />
+            ))}
+          </section>
+        )}
         <section className="settings-section">
           <h2>MCP servers</h2>
           <p>

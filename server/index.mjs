@@ -14,11 +14,18 @@ import { acquireLock } from "./lock.mjs";
 import { integrationCheck, taskInspection } from "./worktree.mjs";
 import {
   integrationTokenConfigured,
+  readIntegration,
   refreshIntegrations,
   saveIntegrationToken,
   supportsIntegrationToken,
 } from "./integrations.mjs";
-import { inspectProject, saveProjectProfile } from "./projects.mjs";
+import {
+  environmentValue,
+  inspectProject,
+  projectEnvironment,
+  saveProjectEnvironment,
+  saveProjectProfile,
+} from "./projects.mjs";
 import { detectedBrowserScripts, runBrowserScript } from "./browser.mjs";
 import {
   callLocalMcpTool,
@@ -212,6 +219,61 @@ export async function createServer({
         );
     }
   };
+  const monitorSentryIssues = async () => {
+    const monitors = store.all(
+      "SELECT m.*,i.provider,i.name,i.status FROM integration_monitors m JOIN integrations i ON i.id=m.integration_id WHERE m.enabled=1 AND i.provider='sentry' AND i.status='connected'",
+    );
+    for (const monitor of monitors) {
+      let config = {},
+        seen = [];
+      try {
+        config = JSON.parse(monitor.config_json || "{}");
+        seen = JSON.parse(monitor.seen_json || "[]");
+      } catch {
+        continue;
+      }
+      const issues = await readIntegration(
+        "sentry",
+        vault,
+        config,
+        integrationFetch,
+      );
+      const issueIds = issues.map((issue) => issue.id).filter(Boolean);
+      if (seen.length) {
+        for (const issue of issues.filter(
+          (issue) => !seen.includes(issue.id),
+        )) {
+          const type = `sentry_issue_${issue.id}`.slice(0, 200);
+          if (
+            store.one(
+              "SELECT id FROM attention_items WHERE type=? AND status='open'",
+              [type],
+            )
+          )
+            continue;
+          store.run(
+            "INSERT INTO attention_items(id,task_id,type,title,detail,status,action_json,created_at) VALUES(?,?,?,?,?,'open',?,?)",
+            [
+              id(),
+              null,
+              type,
+              `New Sentry issue: ${issue.title}`.slice(0, 240),
+              `${issue.level || "unknown"} issue seen ${issue.count || 0} times. Review the attributed Sentry evidence before assigning work.`.slice(
+                0,
+                1200,
+              ),
+              JSON.stringify({ provider: "sentry", issue }),
+              now(),
+            ],
+          );
+        }
+      }
+      store.run(
+        "UPDATE integration_monitors SET seen_json=?,updated_at=? WHERE integration_id=?",
+        [JSON.stringify(issueIds.slice(0, 100)), now(), monitor.integration_id],
+      );
+    }
+  };
   const settleOutcome = (outcome, evidence = "") => {
     const remaining = store.one(
       "SELECT COUNT(*) count FROM acceptance_criteria WHERE outcome_id=? AND status!='pass'",
@@ -306,9 +368,17 @@ export async function createServer({
       mcpConnections: store.all(
         "SELECT * FROM mcp_connections ORDER BY updated_at DESC",
       ),
-      projectProfiles: store.all(
-        "SELECT id,workspace,name,updated_at FROM project_profiles ORDER BY updated_at DESC",
-      ),
+      projectProfiles: store
+        .all(
+          "SELECT id,workspace,name,resources_json,updated_at FROM project_profiles ORDER BY updated_at DESC",
+        )
+        .map((profile) => ({
+          ...profile,
+          environment: environmentValue(
+            projectEnvironment(store, profile.workspace),
+          ),
+          resources: JSON.parse(profile.resources_json || "[]"),
+        })),
       providers: engine.health,
       planning: [...engine.planning.keys()],
       settings: {
@@ -342,6 +412,53 @@ export async function createServer({
     changed();
     res.json(profile);
   });
+  const projectEnvironmentSchema = z.object({
+    workspace: z.string().max(1000),
+    setup: z.array(z.string().trim().min(1).max(500)).max(20),
+    filesToCopy: z
+      .array(
+        z
+          .string()
+          .trim()
+          .min(1)
+          .max(300)
+          .refine(
+            (value) =>
+              !path.isAbsolute(value) && !value.split(/[\\/]+/).includes(".."),
+            "Copy paths must stay inside the project.",
+          ),
+      )
+      .max(20),
+    devCommand: z.string().trim().max(1000),
+    testCommand: z.string().trim().max(1000),
+    buildCommand: z.string().trim().max(1000),
+  });
+  app.get("/api/projects/environment", (req, res) => {
+    const target = workspace(
+      z.object({ workspace: z.string().max(1000) }).parse(req.query).workspace,
+    );
+    const environment = projectEnvironment(store, target);
+    if (!environment) throw new Error("Save this project as a profile first.");
+    res.json(environmentValue(environment));
+  });
+  app.put("/api/projects/environment", (req, res) => {
+    const body = projectEnvironmentSchema.parse(req.body);
+    const target = workspace(body.workspace);
+    if (
+      !store.one("SELECT id FROM project_profiles WHERE workspace=?", [target])
+    )
+      throw new Error(
+        "Save this project as a profile before editing its environment.",
+      );
+    const detected = inspectProject(target).environment.detected;
+    const environment = saveProjectEnvironment(store, target, {
+      ...body,
+      workspace: undefined,
+      detected,
+    });
+    changed();
+    res.json(environment);
+  });
   app.post("/api/integrations/refresh", async (req, res) => {
     const integrations = await refreshIntegrations(store, vault, {
       fetchFn: integrationFetch,
@@ -363,6 +480,75 @@ export async function createServer({
       provider: integration.provider,
       configured: integrationTokenConfigured(vault, integration.provider),
     });
+  });
+  app.post("/api/integrations/:id/read", async (req, res) => {
+    const integration = must("integrations", req.params.id);
+    const input = z
+      .object({
+        organization: z.string().max(100).optional(),
+        project: z.string().max(100).optional(),
+        query: z.string().max(300).optional(),
+        workspace: z.string().max(1000).optional(),
+      })
+      .parse(req.body);
+    if (input.workspace) {
+      const scoped = JSON.parse(integration.workspace_scope_json || "[]");
+      if (scoped.length && !scoped.includes(workspace(input.workspace)))
+        throw new Error("This integration is not allowed for that project.");
+    }
+    const result = await readIntegration(
+      integration.provider,
+      vault,
+      input,
+      integrationFetch,
+    );
+    res.json({ result });
+  });
+  app.put("/api/integrations/:id/sentry-watch", async (req, res) => {
+    const integration = must("integrations", req.params.id);
+    if (integration.provider !== "sentry")
+      throw new Error("Only Sentry supports this production issue watch.");
+    const config = z
+      .object({
+        enabled: z.boolean(),
+        organization: z.string().trim().max(100),
+        project: z.string().trim().max(100).optional(),
+        query: z.string().trim().max(300).optional(),
+      })
+      .parse(req.body);
+    if (
+      config.enabled &&
+      !/^[a-z0-9][a-z0-9_-]{0,99}$/i.test(config.organization)
+    )
+      throw new Error("Enter a Sentry organization slug.");
+    store.run(
+      "INSERT INTO integration_monitors(integration_id,config_json,seen_json,enabled,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(integration_id) DO UPDATE SET config_json=excluded.config_json,seen_json=excluded.seen_json,enabled=excluded.enabled,updated_at=excluded.updated_at",
+      [
+        integration.id,
+        JSON.stringify(config),
+        "[]",
+        config.enabled ? 1 : 0,
+        now(),
+      ],
+    );
+    if (config.enabled) await monitorSentryIssues();
+    changed();
+    res.json({ ...config, baseline: config.enabled });
+  });
+  app.post("/api/integrations/:id/sentry-watch/check", async (req, res) => {
+    const integration = must("integrations", req.params.id);
+    if (integration.provider !== "sentry")
+      throw new Error("Only Sentry supports this production issue watch.");
+    if (
+      !store.one(
+        "SELECT integration_id FROM integration_monitors WHERE integration_id=? AND enabled=1",
+        [integration.id],
+      )
+    )
+      throw new Error("Start a Sentry issue watch before checking it.");
+    await monitorSentryIssues();
+    changed();
+    res.json({ ok: true });
   });
   app.put("/api/integrations/:id/scopes", (req, res) => {
     const integration = must("integrations", req.params.id);
@@ -1705,6 +1891,9 @@ export async function createServer({
       refreshIntegrations(store, vault, { fetchFn: integrationFetch })
         .then(() => {
           reconcileIntegrationAttention();
+          return monitorSentryIssues();
+        })
+        .then(() => {
           const after = JSON.stringify(
             store.all(
               "SELECT provider,status,detail FROM integrations ORDER BY provider",

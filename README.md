@@ -75,7 +75,15 @@ Integrations can be restricted to saved project profiles from Settings. Roster k
 
 Sentry, Linear, Slack, and Notion can be connected with an access token from Settings. Roster stores those tokens in the desktop credential vault, validates only their account access, and never writes them to SQLite or returns them through the local API. GitHub, Vercel, Supabase, CodeRabbit, and Playwright retain their local CLI-based setup paths.
 
+Connected Sentry accounts can read a bounded issue feed and optionally watch an explicitly selected organization and filter. Roster establishes a baseline, then sends only newly observed issues to Needs You. Connected Linear accounts can search issue context. These reads are attributed context, never proof that work is complete.
+
 When GitHub CLI is authenticated, a completed Git-backed task can track its pull request. Roster records the pull request relationship locally, checks review, CI, conflict, and merge state, and puts only actionable changes in Needs You. Tracking is read-only. A separate, explicit desktop action can validate the task worktree, commit its candidate changes, push its task branch without force options, and open a pull request. Roster never silently merges it.
+
+## Project environments
+
+Saving a project profile detects its package manager, setup command, development, test, and build scripts, local environment files, Docker files, CI workflows, and existing skill directories. You can edit the recipe from Settings. Explicitly listed local files are copied only into an isolated task worktree, and development tasks receive a distinct local preview port that appears in Work details.
+
+Project discovery also records existing instructions, skill files, MCP configuration files, and hook directories. Roster imports instruction text only and never executes repository configuration during discovery.
 
 For actionable GitHub CI, review, conflict, or closure findings, Needs You can queue a bounded repair for the original owner in the same task branch. If the original work had an independent reviewer, Roster queues that reviewer again after the repair. The repaired branch must still be explicitly published to update the pull request.
 

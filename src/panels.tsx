@@ -61,6 +61,15 @@ export function WorkerModal({
       scripts: { name: string; command: string }[];
       instructions: { name: string; content: string }[];
       suggestions: string[];
+      environment: {
+        setup: string[];
+        filesToCopy: string[];
+        devCommand: string;
+        testCommand: string;
+        buildCommand: string;
+        detected: { docker?: string[]; ci?: string[]; skills?: string[] };
+      };
+      resources: { type: string; path: string }[];
     } | null>(null),
     [inspecting, setInspecting] = useState(false),
     [profileSaved, setProfileSaved] = useState(false);
@@ -248,6 +257,40 @@ export function WorkerModal({
               {project.suggestions.length > 0 && (
                 <small>
                   Suggested checks: {project.suggestions.join(", ")}
+                </small>
+              )}
+              <small>
+                Setup: {project.environment.setup.join("; ") || "None detected"}
+              </small>
+              {project.environment.devCommand && (
+                <small>Run: {project.environment.devCommand}</small>
+              )}
+              {project.environment.testCommand && (
+                <small>Test: {project.environment.testCommand}</small>
+              )}
+              {project.environment.buildCommand && (
+                <small>Build: {project.environment.buildCommand}</small>
+              )}
+              {(project.environment.filesToCopy.length > 0 ||
+                project.environment.detected.docker?.length ||
+                project.environment.detected.ci?.length ||
+                project.environment.detected.skills?.length) && (
+                <small>
+                  Detected:{" "}
+                  {[
+                    ...project.environment.filesToCopy,
+                    ...(project.environment.detected.docker || []),
+                    ...(project.environment.detected.ci || []),
+                    ...(project.environment.detected.skills || []),
+                  ].join(", ")}
+                </small>
+              )}
+              {project.resources.length > 0 && (
+                <small>
+                  Existing project knowledge: {project.resources.length} item
+                  {project.resources.length === 1 ? "" : "s"} found. Roster will
+                  import only instruction text and records the other resources
+                  without executing them.
                 </small>
               )}
               {project.instructions.length > 0 && (
@@ -848,6 +891,14 @@ export function TaskPanel({
               <span>Verification</span>
               <strong>{statusLabel[task.verification]}</strong>
             </div>
+            {task.preview_url && (
+              <div className="detail-pair">
+                <span>Reserved preview</span>
+                <a href={task.preview_url} target="_blank" rel="noreferrer">
+                  {task.preview_url}
+                </a>
+              </div>
+            )}
             {task.error && <p className="form-error">{task.error}</p>}
             {activeStatuses.includes(task.status) && (
               <button

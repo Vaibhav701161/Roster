@@ -66,6 +66,7 @@ export type Task = {
   base_commit?: string;
   branch?: string;
   worktree_path?: string;
+  preview_url?: string;
   criteria_total?: number;
   criteria_passed?: number;
   has_receipt?: number;
@@ -147,6 +148,22 @@ export type ProjectProfile = {
   workspace: string;
   name: string;
   updated_at: string;
+  environment: ProjectEnvironment | null;
+  resources: { type: string; path: string }[];
+};
+export type ProjectEnvironment = {
+  setup: string[];
+  filesToCopy: string[];
+  devCommand: string;
+  testCommand: string;
+  buildCommand: string;
+  detected: {
+    docker?: string[];
+    readme?: string[];
+    ci?: string[];
+    skills?: string[];
+  };
+  updatedAt: string;
 };
 export type AttentionItem = {
   id: string;

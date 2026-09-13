@@ -35,3 +35,13 @@ Roster discovers protected-resource metadata before starting a connection. When 
 ## Native integration credentials
 
 Sentry, Linear, Slack, and Notion use a token entered in Settings. The token is saved under a provider-specific name in the desktop credential vault, never in SQLite, application state, logs, or a GET response. Roster performs a small read-only account probe when the connection is saved or refreshed. A rejected token is shown as requiring authentication, and a network failure is shown as unavailable; neither state is treated as evidence of completed work.
+
+## Project environments
+
+Roster turns a saved project inspection into a local environment recipe. It detects package-manager setup, scripts, local environment-file names, Docker configuration, CI workflow names, and agent skill directories without executing repository configuration. The recipe can be edited in Settings. Only files explicitly selected by the user are copied into a task's isolated worktree, and copy paths cannot escape the source project. Development recipes reserve a distinct localhost port for each task and expose it as `ROSTER_PORT` in worker context and as a preview URL in task details.
+
+Project discovery stores metadata for instruction files, skill files, MCP configuration files, and hook directories. Instruction text is bounded and may be imported into a worker profile. Other discovered resources remain names only until a user explicitly connects or reviews them.
+
+## Sentry watch
+
+An authenticated Sentry integration can read a bounded issue feed and watch an organization, project, and optional filter. Saving a watch reads a baseline. Later new issue identifiers create Needs You items with attributed Sentry context. Roster does not create a task, edit code, deploy, or close a Sentry issue through this watch.

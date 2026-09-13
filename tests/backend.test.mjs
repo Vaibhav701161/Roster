@@ -474,15 +474,22 @@ test("coding work receives an isolated worktree with a persisted outcome and tas
     cwd: workspace,
   });
   fs.writeFileSync(path.join(workspace, "example.txt"), "before\n");
-  execFileSync("git", ["add", "example.txt"], { cwd: workspace });
+  fs.writeFileSync(path.join(workspace, ".gitignore"), ".env.local\n");
+  execFileSync("git", ["add", "example.txt", ".gitignore"], {
+    cwd: workspace,
+  });
   execFileSync("git", ["commit", "-m", "initial"], { cwd: workspace });
+  fs.writeFileSync(path.join(workspace, ".env.local"), "LOCAL_ONLY=true\n");
   let executionWorkspace = "";
+  let copiedEnvironment = "";
   const f = await fixture(async (o) => {
     executionWorkspace = o.cwd;
+    copiedEnvironment = fs.readFileSync(path.join(o.cwd, ".env.local"), "utf8");
     fs.writeFileSync(path.join(o.cwd, "example.txt"), "after\n");
     return { text: "The fix is ready for review." };
   });
   try {
+    await f.request("/projects/profile", "POST", { workspace });
     const a = await f.request("/agents", "POST", worker("Alex", { workspace }));
     await f.request(`/conversations/${a.conversationId}/messages`, "POST", {
       content: "Fix the example file. Do not change the database schema.",
@@ -491,6 +498,7 @@ test("coding work receives an isolated worktree with a persisted outcome and tas
       f.app.store.one("SELECT * FROM tasks WHERE status='completed'"),
     );
     assert.notEqual(executionWorkspace, workspace);
+    assert.equal(copiedEnvironment, "LOCAL_ONLY=true\n");
     assert.equal(task.worktree_path, executionWorkspace);
     assert.match(task.branch, /^roster\/task-/);
     assert.equal(
@@ -510,6 +518,15 @@ test("coding work receives an isolated worktree with a persisted outcome and tas
     assert.equal(taskSummary.criteria_passed, 0);
     const inspection = await f.request(`/tasks/${task.id}/inspection`);
     assert.match(inspection.diff, /after/);
+    assert.deepEqual(
+      JSON.parse(
+        f.app.store.one(
+          "SELECT detail FROM events WHERE task_id=? AND type='worktree.created'",
+          [task.id],
+        ).detail,
+      ).copiedEnvironmentFiles,
+      [".env.local"],
+    );
     const handoff = await f.request(
       `/tasks/${task.id}/integration-ready`,
       "POST",
@@ -834,6 +851,30 @@ test("native integration tokens stay in the vault and are verified without enter
     vault,
     integrationFetch: async (url, options) => {
       calls.push({ url, options });
+      if (String(options.body || "").includes("RosterIssueSearch"))
+        return new Response(
+          JSON.stringify({
+            data: {
+              searchIssues: {
+                nodes: [
+                  {
+                    id: "issue",
+                    identifier: "ENG-42",
+                    title: "Bounded search result",
+                    state: { name: "In progress" },
+                    priority: 2,
+                    updatedAt: "2026-01-01T00:00:00.000Z",
+                    url: "https://linear.app/example/issue/ENG-42",
+                  },
+                ],
+              },
+            },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
       if (url === "https://api.linear.app/graphql")
         return new Response(
           JSON.stringify({ data: { viewer: { id: "user" } } }),
@@ -867,6 +908,11 @@ test("native integration tokens stay in the vault and are verified without enter
     );
     assert.equal(connected.status, "connected");
     assert.equal(connected.credential_configured, true);
+    const read = await f.request(`/integrations/${linear.id}/read`, "POST", {
+      query: "checkout",
+    });
+    assert.equal(read.result[0].identifier, "ENG-42");
+    assert.equal(calls.length, 2);
     assert.equal(JSON.stringify(state).includes("linear-test-token"), false);
     assert.equal(
       JSON.stringify(f.app.store.all("SELECT * FROM integrations")).includes(
@@ -881,6 +927,66 @@ test("native integration tokens stay in the vault and are verified without enter
         (item) => item.provider === "linear",
       ).credential_configured,
       false,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
+test("Sentry watch baselines known issues and escalates only newly observed ones", async () => {
+  const secrets = new Map();
+  let issueId = "known";
+  const vault = {
+    mode: "test",
+    get: () => "",
+    set: () => {},
+    getNamed: (key) => secrets.get(key) || "",
+    setNamed: (key, value) => secrets.set(key, value),
+  };
+  const f = await fixture(async () => ({ text: "unused" }), {
+    vault,
+    integrationFetch: async (url) => {
+      if (String(url).includes("/organizations/acme/issues/"))
+        return new Response(
+          JSON.stringify([
+            {
+              id: issueId,
+              title: `${issueId} failure`,
+              level: "error",
+              count: 3,
+              lastSeen: "2026-01-01T00:00:00.000Z",
+              permalink: "https://sentry.example/issues/1",
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      return new Response("{}", { status: 200 });
+    },
+  });
+  try {
+    const integrations = await f.request("/integrations/refresh", "POST", {});
+    const sentry = integrations.integrations.find(
+      (item) => item.provider === "sentry",
+    );
+    await f.request(`/integrations/${sentry.id}/token`, "PUT", {
+      token: "sentry-test-token",
+    });
+    await f.request(`/integrations/${sentry.id}/sentry-watch`, "PUT", {
+      enabled: true,
+      organization: "acme",
+    });
+    assert.equal((await f.request("/state")).needsYou.length, 0);
+    issueId = "new";
+    await f.request(
+      `/integrations/${sentry.id}/sentry-watch/check`,
+      "POST",
+      {},
+    );
+    assert.equal(
+      (await f.request("/state")).needsYou.some(
+        (item) => item.type === "sentry_issue_new",
+      ),
+      true,
     );
   } finally {
     await f.app.close();
@@ -1416,12 +1522,35 @@ test("project inspection discovers local scripts and instruction files", async (
   );
   fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}");
   fs.writeFileSync(path.join(workspace, "AGENTS.md"), "Use focused tests.");
+  fs.mkdirSync(path.join(workspace, ".agents", "skills"), { recursive: true });
+  fs.writeFileSync(
+    path.join(workspace, ".agents", "skills", "release.md"),
+    "Do not execute this during discovery.",
+  );
+  fs.writeFileSync(path.join(workspace, ".mcp.json"), "{}");
   const f = await fixture(async () => ({ text: "unused" }));
   try {
     const project = await f.request("/projects/inspect", "POST", { workspace });
     assert.equal(project.name, "sample");
     assert.equal(project.instructions[0].name, "AGENTS.md");
     assert.equal(project.scripts.length, 2);
+    assert.deepEqual(project.environment.setup, ["npm ci"]);
+    assert.equal(project.environment.testCommand, "npm run test");
+    assert.equal(project.environment.buildCommand, "npm run build");
+    assert.equal(
+      project.resources.some(
+        (resource) =>
+          resource.type === "skill" &&
+          resource.path === ".agents/skills/release.md",
+      ),
+      true,
+    );
+    assert.equal(
+      project.resources.some(
+        (resource) => resource.type === "mcp_configuration",
+      ),
+      true,
+    );
   } finally {
     await f.app.close();
   }
@@ -1433,7 +1562,10 @@ test("an explicitly saved project profile supplies bounded instructions to later
   );
   fs.writeFileSync(
     path.join(workspace, "package.json"),
-    JSON.stringify({ name: "profiled-app", scripts: { test: "node --test" } }),
+    JSON.stringify({
+      name: "profiled-app",
+      scripts: { dev: "vite", test: "node --test" },
+    }),
   );
   fs.writeFileSync(path.join(workspace, "AGENTS.md"), "Run the focused test.");
   let prompt = "";
@@ -1442,8 +1574,28 @@ test("an explicitly saved project profile supplies bounded instructions to later
     return { text: "Completed the requested work." };
   });
   try {
+    fs.writeFileSync(path.join(workspace, "package-lock.json"), "{}");
+    fs.writeFileSync(path.join(workspace, ".env.local"), "LOCAL_ONLY=true\n");
     const profile = await f.request("/projects/profile", "POST", { workspace });
     assert.equal(profile.name, "profiled-app");
+    assert.deepEqual(profile.environment.setup, ["npm ci"]);
+    const updated = await f.request("/projects/environment", "PUT", {
+      workspace,
+      setup: ["npm ci"],
+      filesToCopy: [".env.local"],
+      devCommand: "npm run dev",
+      testCommand: "npm run test",
+      buildCommand: "npm run build",
+    });
+    assert.deepEqual(updated.filesToCopy, [".env.local"]);
+    assert.equal(
+      (
+        await f.request(
+          `/projects/environment?workspace=${encodeURIComponent(workspace)}`,
+        )
+      ).buildCommand,
+      "npm run build",
+    );
     const a = await f.request("/agents", "POST", worker("Alex", { workspace }));
     await f.request(`/conversations/${a.conversationId}/messages`, "POST", {
       content: "Implement the requested change.",
@@ -1455,6 +1607,15 @@ test("an explicitly saved project profile supplies bounded instructions to later
     );
     assert.match(prompt, /Project profile: profiled-app/);
     assert.match(prompt, /Run the focused test/);
+    assert.match(prompt, /Project environment/);
+    assert.match(prompt, /Discovered project resources/);
+    assert.match(prompt, /npm run build/);
+    assert.match(prompt, /ROSTER_PORT=4\d{3}/);
+    assert.match(
+      f.app.store.one("SELECT preview_url FROM tasks ORDER BY rowid DESC")
+        .preview_url,
+      /^http:\/\/127\.0\.0\.1:4\d{3}$/,
+    );
     assert.match(prompt, /Definition of done/);
     assert.match(prompt, /The requested outcome is addressed/);
   } finally {

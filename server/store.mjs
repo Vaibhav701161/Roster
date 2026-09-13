@@ -134,6 +134,27 @@ export async function openStore(directory) {
       ALTER TABLE mcp_connections ADD COLUMN workspace_scope_json TEXT NOT NULL DEFAULT '[]';
       INSERT INTO migration VALUES(15,datetime('now')); COMMIT;`);
   }
+  if (!one("SELECT * FROM migration WHERE version=16")) {
+    db.exec(`BEGIN;
+      CREATE TABLE project_environments(workspace TEXT PRIMARY KEY REFERENCES project_profiles(workspace) ON DELETE CASCADE,setup_json TEXT NOT NULL DEFAULT '[]',files_to_copy_json TEXT NOT NULL DEFAULT '[]',dev_command TEXT NOT NULL DEFAULT '',test_command TEXT NOT NULL DEFAULT '',build_command TEXT NOT NULL DEFAULT '',detected_json TEXT NOT NULL DEFAULT '{}',updated_at TEXT NOT NULL);
+      INSERT INTO migration VALUES(16,datetime('now')); COMMIT;`);
+  }
+  if (!one("SELECT * FROM migration WHERE version=17")) {
+    db.exec(`BEGIN;
+      ALTER TABLE tasks ADD COLUMN preview_url TEXT NOT NULL DEFAULT '';
+      CREATE TABLE task_ports(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,port INTEGER NOT NULL UNIQUE,created_at TEXT NOT NULL);
+      INSERT INTO migration VALUES(17,datetime('now')); COMMIT;`);
+  }
+  if (!one("SELECT * FROM migration WHERE version=18")) {
+    db.exec(`BEGIN;
+      ALTER TABLE project_profiles ADD COLUMN resources_json TEXT NOT NULL DEFAULT '[]';
+      INSERT INTO migration VALUES(18,datetime('now')); COMMIT;`);
+  }
+  if (!one("SELECT * FROM migration WHERE version=19")) {
+    db.exec(`BEGIN;
+      CREATE TABLE integration_monitors(integration_id TEXT PRIMARY KEY REFERENCES integrations(id) ON DELETE CASCADE,config_json TEXT NOT NULL DEFAULT '{}',seen_json TEXT NOT NULL DEFAULT '[]',enabled INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL);
+      INSERT INTO migration VALUES(19,datetime('now')); COMMIT;`);
+  }
   const setting = (key, fallback = null) => {
     const row = one("SELECT value FROM settings WHERE key=?", [key]);
     return row ? JSON.parse(row.value) : fallback;

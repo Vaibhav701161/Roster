@@ -489,6 +489,18 @@ export function App() {
         (t) =>
           t.conversation_id === selected && activeStatuses.includes(t.status),
       ));
+  const conversationTasks =
+    state?.tasks.filter((task) => task.conversation_id === selected) || [];
+  const latestTask = conversationTasks.at(-1);
+  const quickReplies = busy
+    ? ["Show me progress.", "Show me the current diff.", "Explain any blocker."]
+    : latestTask?.status === "completed"
+      ? [
+          "Show me the verification evidence.",
+          "Show me the diff.",
+          "What should we do next?",
+        ]
+      : ["Help me define done for this.", "Suggest the smallest next step."];
   async function send() {
     if (!draft.trim() || !selected || sending) return;
     setSending(true);
@@ -1282,6 +1294,25 @@ export function App() {
                     )}
                   </div>
                   <div className="composer-wrap">
+                    {messages.length > 0 && !draft && (
+                      <div
+                        className="quick-replies"
+                        aria-label="Suggested replies"
+                      >
+                        {quickReplies.map((reply) => (
+                          <button
+                            key={reply}
+                            type="button"
+                            onClick={() => {
+                              setDraft(reply);
+                              input.current?.focus();
+                            }}
+                          >
+                            {reply}
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {reply && (
                       <div className="reply-preview">
                         <span>

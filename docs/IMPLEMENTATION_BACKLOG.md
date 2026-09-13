@@ -15,6 +15,7 @@ This document tracks the product work from the current engineering and messenger
 
 - [x] Add bounded replanning and team recipes.
 - [x] Support explicit instruction import and durable, bounded project profiles.
+- [x] Detect, persist, edit, and apply project environment recipes with isolated-file copies and task preview ports.
 - [x] Add the local integration control plane with credential-aware health, risk, scoped tools, and graceful unavailable states.
 - [x] Discover remote MCP servers using initialization and protected-resource metadata without sending credentials.
 - [x] Execute discovered remote HTTP and local stdio MCP tools through explicit user actions with bounded payloads and local audit records.
@@ -26,10 +27,11 @@ This document tracks the product work from the current engineering and messenger
 - [x] Run an explicitly selected browser or end-to-end project script as bounded task evidence without treating it as a review verdict.
 - [ ] Build the engineering integrations in priority order: GitHub, Sentry, Vercel, Playwright, CodeRabbit, Linear, Supabase/Postgres, Slack, and Notion.
 - [x] Add continuous pull-request ownership monitoring and fact-based weekly receipts with Markdown export.
+- [x] Add an opt-in Sentry production-issue watch that baselines known issues and escalates only newly observed issues.
 
 ## Experience work
 
-- [ ] Complete the WhatsApp-inspired messenger polish: richer worker identity, reply and reaction interactions, task and receipt cards, improved composer, and contact-style roster navigation.
+- [x] Complete the WhatsApp-inspired messenger polish: richer worker identity, reply and reaction interactions, task and receipt cards, improved composer, contact-style roster navigation, and task-aware suggested replies.
 - [ ] Improve responsive desktop layouts, keyboard access, contrast, theme handling, and performance.
 
 ## Desktop platform work
@@ -38,4 +40,4 @@ This document tracks the product work from the current engineering and messenger
 
 ## Validation
 
-- [ ] Run consolidated practical regression, parallel-worktree, outcome, restart, provider, packaging, accessibility, and integration-failure scenarios after implementation batches complete.
+- [x] Run consolidated practical regression, parallel-worktree, outcome, restart, provider, packaging, accessibility, and integration-failure scenarios after implementation batches complete.

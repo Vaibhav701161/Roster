@@ -1213,6 +1213,25 @@ select {
   position: relative;
   border-top: 1px solid var(--line);
 }
+.quick-replies {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  padding: 0 14px 9px;
+}
+.quick-replies button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--green-dark);
+  font-size: 10px;
+  padding: 6px 9px;
+}
+.quick-replies button:hover,
+.quick-replies button:focus-visible {
+  border-color: var(--green);
+  background: var(--green-soft);
+}
 .composer {
   background: var(--bg);
   display: flex;

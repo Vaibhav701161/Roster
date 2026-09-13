@@ -348,6 +348,86 @@ export function supportsIntegrationToken(provider) {
   return !!tokenProviders[provider];
 }
 
+export async function readIntegration(
+  provider,
+  vault,
+  input = {},
+  fetchFn = fetch,
+) {
+  const token = namedSecret(vault, provider);
+  if (!token) throw new Error(`Connect ${provider} before reading its data.`);
+  if (provider === "sentry") {
+    const organization = String(input.organization || "").trim();
+    const project = String(input.project || "").trim();
+    const query = String(input.query || "").trim();
+    if (!/^[a-z0-9][a-z0-9_-]{0,99}$/i.test(organization))
+      throw new Error("Enter a Sentry organization slug.");
+    const params = new URLSearchParams({ limit: "25" });
+    if (project) params.set("project", project);
+    if (query) params.set("query", query);
+    const response = await fetchFn(
+      `https://sentry.io/api/0/organizations/${encodeURIComponent(organization)}/issues/?${params}`,
+      {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!response.ok) throw new Error(`Sentry returned ${response.status}.`);
+    const issues = await response.json();
+    return Array.isArray(issues)
+      ? issues.slice(0, 25).map((issue) => ({
+          id: String(issue.id || ""),
+          title: String(issue.title || issue.culprit || "Untitled issue").slice(
+            0,
+            500,
+          ),
+          level: String(issue.level || "unknown"),
+          count: Number(issue.count || 0),
+          lastSeen: String(issue.lastSeen || ""),
+          url: String(issue.permalink || ""),
+        }))
+      : [];
+  }
+  if (provider === "linear") {
+    const query = String(input.query || "")
+      .trim()
+      .slice(0, 300);
+    if (!query) throw new Error("Enter a Linear issue search.");
+    const response = await fetchFn("https://api.linear.app/graphql", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        query:
+          "query RosterIssueSearch($query: String!) { searchIssues(query: $query, first: 25) { nodes { id identifier title url updatedAt priority state { name } } } }",
+        variables: { query },
+      }),
+      signal: AbortSignal.timeout(10000),
+    });
+    const payload = await response.json();
+    if (!response.ok || payload.errors?.length)
+      throw new Error("Linear could not complete this issue search.");
+    return (payload.data?.searchIssues?.nodes || [])
+      .slice(0, 25)
+      .map((issue) => ({
+        id: String(issue.id || ""),
+        identifier: String(issue.identifier || ""),
+        title: String(issue.title || "Untitled issue").slice(0, 500),
+        state: String(issue.state?.name || ""),
+        priority: Number(issue.priority || 0),
+        updatedAt: String(issue.updatedAt || ""),
+        url: String(issue.url || ""),
+      }));
+  }
+  throw new Error("This integration does not expose a direct read action yet.");
+}
+
 export async function refreshIntegrations(store, vault, options = {}) {
   const results = await Promise.all(
     catalog.map(async (entry) => ({

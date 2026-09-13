@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { z } from "zod";
 import { id, now } from "./store.mjs";
@@ -24,7 +25,11 @@ import {
   taskRequirements,
 } from "./capabilities.mjs";
 import { isGitWorkspace, provisionWorktree } from "./worktree.mjs";
-import { projectProfileMemory } from "./projects.mjs";
+import {
+  copyEnvironmentFiles,
+  projectEnvironment,
+  projectProfileMemory,
+} from "./projects.mjs";
 const assignment = z.object({
   agent_id: z.string(),
   objective: z.string().min(1).max(8000),
@@ -50,6 +55,34 @@ export function validatePlan(value, members) {
   return plan;
 }
 const terminal = ["completed", "failed", "cancelled", "interrupted"];
+function canListen(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)));
+  });
+}
+async function reserveTaskPort(store, taskId) {
+  const reserved = store.one("SELECT port FROM task_ports WHERE task_id=?", [
+    taskId,
+  ]);
+  if (reserved) return reserved.port;
+  for (let port = 4400; port < 5400; port++) {
+    if (store.one("SELECT task_id FROM task_ports WHERE port=?", [port]))
+      continue;
+    if (!(await canListen(port))) continue;
+    try {
+      store.run(
+        "INSERT INTO task_ports(task_id,port,created_at) VALUES(?,?,?)",
+        [taskId, port, now()],
+      );
+      return port;
+    } catch {
+      // Another local task claimed the port while it was being checked.
+    }
+  }
+  throw new Error("Roster could not reserve a local preview port.");
+}
 const reviewVerdict = z.object({
   verdict: z.enum(["pass", "concerns", "fail", "unable_to_verify"]),
   summary: z.string().min(1).max(8000),
@@ -624,9 +657,16 @@ export function createEngine(
           );
           const activeTask = active.get(task.id);
           if (activeTask) activeTask.workspace = workspace;
+          const environment = projectEnvironment(store, task.workspace);
+          const copied = copyEnvironmentFiles(
+            environment,
+            isolated.repository,
+            isolated.worktreePath,
+          );
           event(task.id, "worktree.created", {
             branch: isolated.branch,
             baseCommit: isolated.baseCommit,
+            ...(copied.length ? { copiedEnvironmentFiles: copied } : {}),
           });
         }
       }
@@ -674,11 +714,24 @@ export function createEngine(
             task.workspace,
           ])
         : null;
+      const environment = profile
+        ? projectEnvironment(store, task.workspace)
+        : null;
+      const hasDevelopmentCommand = environment && environment.dev_command;
+      const previewPort =
+        task.kind === "work" && hasDevelopmentCommand
+          ? await reserveTaskPort(store, task.id)
+          : null;
+      if (previewPort)
+        store.run("UPDATE tasks SET preview_url=? WHERE id=?", [
+          `http://127.0.0.1:${previewPort}`,
+          task.id,
+        ]);
       const memory = profile
         ? [
             ...savedMemory,
             {
-              content: projectProfileMemory(profile),
+              content: projectProfileMemory(profile, environment, previewPort),
               source: "project_profile",
             },
           ]
