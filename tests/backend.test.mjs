@@ -774,6 +774,114 @@ test("integration refresh persists scoped engineering tool status without creden
       f.app.store.one("SELECT COUNT(*) count FROM integration_tools").count,
       9,
     );
+    const workspace = fs.mkdtempSync(
+      path.join(os.tmpdir(), "roster-integration-scope-"),
+    );
+    await assert.rejects(
+      () =>
+        f.request(`/integrations/${github.id}/scopes`, "PUT", {
+          workspaces: [workspace],
+        }),
+      /Save this project as a profile/,
+    );
+    await f.request("/projects/profile", "POST", { workspace });
+    const scoped = await f.request(`/integrations/${github.id}/scopes`, "PUT", {
+      workspaces: [workspace],
+    });
+    assert.deepEqual(JSON.parse(scoped.workspace_scope_json), [workspace]);
+    f.app.store.run(
+      "UPDATE integrations SET status='authentication_required',detail='Sign in to continue.' WHERE id=?",
+      [github.id],
+    );
+    await f.request(`/integrations/${github.id}/scopes`, "PUT", {
+      workspaces: [workspace],
+    });
+    assert.equal(
+      (await f.request("/state")).needsYou.some(
+        (item) => item.type === "integration_github" && item.status === "open",
+      ),
+      true,
+    );
+    f.app.store.run(
+      "UPDATE integrations SET status='connected',detail='Connected.' WHERE id=?",
+      [github.id],
+    );
+    await f.request(`/integrations/${github.id}/scopes`, "PUT", {
+      workspaces: [workspace],
+    });
+    assert.equal(
+      (await f.request("/state")).needsYou.some(
+        (item) => item.type === "integration_github" && item.status === "open",
+      ),
+      false,
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
+test("native integration tokens stay in the vault and are verified without entering application state", async () => {
+  const secrets = new Map();
+  const calls = [];
+  const vault = {
+    mode: "test",
+    get: () => "",
+    set: () => {},
+    getNamed: (key) => secrets.get(key) || "",
+    setNamed: (key, value) => secrets.set(key, value),
+  };
+  const f = await fixture(async () => ({ text: "unused" }), {
+    vault,
+    integrationFetch: async (url, options) => {
+      calls.push({ url, options });
+      if (url === "https://api.linear.app/graphql")
+        return new Response(
+          JSON.stringify({ data: { viewer: { id: "user" } } }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      return new Response("{}", { status: 401 });
+    },
+  });
+  try {
+    const integrations = await f.request("/integrations/refresh", "POST", {});
+    const linear = integrations.integrations.find(
+      (item) => item.provider === "linear",
+    );
+    await f.request(`/integrations/${linear.id}/token`, "PUT", {
+      token: "linear-test-token",
+    });
+    assert.equal(secrets.get("integration:linear:token"), "linear-test-token");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, "https://api.linear.app/graphql");
+    assert.equal(calls[0].options.method, "POST");
+    assert.equal(
+      calls[0].options.headers.Authorization,
+      "Bearer linear-test-token",
+    );
+    const state = await f.request("/state");
+    const connected = state.integrations.find(
+      (item) => item.provider === "linear",
+    );
+    assert.equal(connected.status, "connected");
+    assert.equal(connected.credential_configured, true);
+    assert.equal(JSON.stringify(state).includes("linear-test-token"), false);
+    assert.equal(
+      JSON.stringify(f.app.store.all("SELECT * FROM integrations")).includes(
+        "linear-test-token",
+      ),
+      false,
+    );
+    await f.request(`/integrations/${linear.id}/token`, "PUT", { token: "" });
+    assert.equal(secrets.get("integration:linear:token"), "");
+    assert.equal(
+      (await f.request("/state")).integrations.find(
+        (item) => item.provider === "linear",
+      ).credential_configured,
+      false,
+    );
   } finally {
     await f.app.close();
   }
@@ -1132,7 +1240,12 @@ test("protected MCP servers connect with PKCE and keep OAuth tokens out of SQLit
     const port = server.address().port;
     const origin = `http://127.0.0.1:${port}`;
     if (req.url === "/secure" && req.method === "POST") {
-      if (req.headers.authorization === "Bearer fixture-access-token") {
+      if (
+        [
+          "Bearer fixture-access-token",
+          "Bearer fixture-refreshed-token",
+        ].includes(req.headers.authorization)
+      ) {
         if (body.method === "initialize") {
           res.setHeader("Content-Type", "application/json");
           return res.end(
@@ -1215,13 +1328,26 @@ test("protected MCP servers connect with PKCE and keep OAuth tokens out of SQLit
       tokenRequest = new URLSearchParams(raw);
       assert.equal(tokenRequest.get("client_id"), "fixture-client");
       assert.equal(tokenRequest.get("resource"), `${origin}/secure`);
-      assert.ok(tokenRequest.get("code_verifier"));
+      if (tokenRequest.get("grant_type") === "authorization_code") {
+        assert.equal(tokenRequest.get("code"), "fixture-code");
+        assert.ok(tokenRequest.get("code_verifier"));
+      } else {
+        assert.equal(tokenRequest.get("grant_type"), "refresh_token");
+        assert.equal(
+          tokenRequest.get("refresh_token"),
+          "fixture-refresh-token",
+        );
+      }
       res.setHeader("Content-Type", "application/json");
       return res.end(
         JSON.stringify({
-          access_token: "fixture-access-token",
+          access_token:
+            tokenRequest.get("grant_type") === "refresh_token"
+              ? "fixture-refreshed-token"
+              : "fixture-access-token",
           refresh_token: "fixture-refresh-token",
-          expires_in: 300,
+          expires_in:
+            tokenRequest.get("grant_type") === "refresh_token" ? 300 : 0,
         }),
       );
     }
@@ -1248,6 +1374,7 @@ test("protected MCP servers connect with PKCE and keep OAuth tokens out of SQLit
       authorizeUrl.searchParams.get("resource"),
       `http://127.0.0.1:${port}/secure`,
     );
+    assert.equal(authorizeUrl.searchParams.get("scope"), null);
     const callback = new URL(authorizeUrl.searchParams.get("redirect_uri"));
     callback.searchParams.set("code", "fixture-code");
     callback.searchParams.set("state", authorizeUrl.searchParams.get("state"));
@@ -1262,6 +1389,7 @@ test("protected MCP servers connect with PKCE and keep OAuth tokens out of SQLit
       arguments: {},
     });
     assert.equal(call.result.content[0].text, "Protected context");
+    assert.equal(tokenRequest.get("grant_type"), "refresh_token");
     const serialized = JSON.stringify(
       f.app.store.one(
         "SELECT auth_metadata_json FROM mcp_connections WHERE id=?",
@@ -1485,6 +1613,13 @@ test("weekly digest uses only persisted verified outcome facts", async () => {
     const digest = await f.request("/digest/weekly");
     assert.equal(digest.verifiedCount, 1);
     assert.equal(digest.outcomes[0].title, "Verified task");
+    const receipt = await fetch(`${f.app.url}/api/digest/weekly/receipt`);
+    assert.equal(receipt.status, 200);
+    assert.match(await receipt.text(), /Verified task/);
+    assert.match(
+      receipt.headers.get("content-disposition"),
+      /Roster-weekly-receipt/,
+    );
   } finally {
     await f.app.close();
   }

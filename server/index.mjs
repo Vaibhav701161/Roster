@@ -12,7 +12,12 @@ import { cleanError } from "./runtime.mjs";
 import { createVault, providerKey } from "./vault.mjs";
 import { acquireLock } from "./lock.mjs";
 import { integrationCheck, taskInspection } from "./worktree.mjs";
-import { refreshIntegrations } from "./integrations.mjs";
+import {
+  integrationTokenConfigured,
+  refreshIntegrations,
+  saveIntegrationToken,
+  supportsIntegrationToken,
+} from "./integrations.mjs";
 import { inspectProject, saveProjectProfile } from "./projects.mjs";
 import { detectedBrowserScripts, runBrowserScript } from "./browser.mjs";
 import {
@@ -25,6 +30,7 @@ import {
   beginMcpAuthorization,
   completeMcpAuthorization,
   mcpAccessToken,
+  refreshMcpAuthorization,
 } from "./mcp-oauth.mjs";
 import {
   createGithubOwnership,
@@ -77,6 +83,7 @@ export async function createServer({
   vault,
   runner,
   githubClient,
+  integrationFetch,
 } = {}) {
   const releaseLock = acquireLock(directory);
   let store;
@@ -129,11 +136,81 @@ export async function createServer({
   });
   app.use(express.json({ limit: "2mb" }));
   const changed = () => broadcast("state.changed", {});
+  const usableMcpAccessToken = async (connection) => {
+    if (connection.transport !== "remote") return "";
+    let metadata = {};
+    try {
+      metadata = JSON.parse(connection.auth_metadata_json || "{}");
+    } catch {
+      return mcpAccessToken(connection, vault);
+    }
+    const expiry = metadata.oauth?.expires_at;
+    if (
+      typeof expiry !== "number" ||
+      expiry > Date.now() + 30000 ||
+      !mcpAccessToken(connection, vault)
+    )
+      return mcpAccessToken(connection, vault);
+    const refreshed = await refreshMcpAuthorization({ connection, vault });
+    store.run(
+      "UPDATE mcp_connections SET auth_metadata_json=?,detail=?,updated_at=? WHERE id=?",
+      [
+        JSON.stringify(refreshed.authMetadata),
+        "Authorization token refreshed for the connected MCP server.",
+        now(),
+        connection.id,
+      ],
+    );
+    return refreshed.accessToken;
+  };
   const must = (table, key) => {
     const row = store.one(`SELECT * FROM ${table} WHERE id=?`, [key]);
     if (!row)
       throw new Error("This item no longer exists. Refresh to continue.");
     return row;
+  };
+  const reconcileIntegrationAttention = () => {
+    const integrations = store.all(
+      "SELECT id,provider,name,status,detail,workspace_scope_json FROM integrations",
+    );
+    for (const integration of integrations) {
+      let scoped = [];
+      try {
+        scoped = JSON.parse(integration.workspace_scope_json || "[]");
+      } catch {
+        scoped = [];
+      }
+      const type = `integration_${integration.provider}`;
+      const needsAttention =
+        Array.isArray(scoped) &&
+        scoped.length > 0 &&
+        !["connected", "available"].includes(integration.status);
+      if (needsAttention) {
+        if (
+          !store.one(
+            "SELECT id FROM attention_items WHERE type=? AND status='open'",
+            [type],
+          )
+        )
+          store.run(
+            "INSERT INTO attention_items(id,task_id,type,title,detail,action_json,created_at) VALUES(?,?,?,?,?,?,?)",
+            [
+              id(),
+              null,
+              type,
+              `${integration.name} needs attention`,
+              integration.detail ||
+                "This project-scoped integration is unavailable.",
+              JSON.stringify({ provider: integration.provider }),
+              now(),
+            ],
+          );
+      } else
+        store.run(
+          "UPDATE attention_items SET status='resolved',resolved_at=? WHERE type=? AND status='open'",
+          [now(), type],
+        );
+    }
   };
   const settleOutcome = (outcome, evidence = "") => {
     const remaining = store.one(
@@ -211,7 +288,18 @@ export async function createServer({
         "SELECT * FROM attention_items WHERE status='open' ORDER BY created_at DESC LIMIT 100",
       ),
       memories: store.all("SELECT * FROM memories"),
-      integrations: store.all("SELECT * FROM integrations ORDER BY name"),
+      integrations: store
+        .all("SELECT * FROM integrations ORDER BY name")
+        .map((integration) => ({
+          ...integration,
+          credential_configurable: supportsIntegrationToken(
+            integration.provider,
+          ),
+          credential_configured: integrationTokenConfigured(
+            vault,
+            integration.provider,
+          ),
+        })),
       githubOwnership: store.all(
         "SELECT * FROM github_ownership ORDER BY updated_at DESC LIMIT 100",
       ),
@@ -255,9 +343,49 @@ export async function createServer({
     res.json(profile);
   });
   app.post("/api/integrations/refresh", async (req, res) => {
-    const integrations = await refreshIntegrations(store);
+    const integrations = await refreshIntegrations(store, vault, {
+      fetchFn: integrationFetch,
+    });
+    reconcileIntegrationAttention();
     changed();
     res.json({ integrations });
+  });
+  app.put("/api/integrations/:id/token", async (req, res) => {
+    const integration = must("integrations", req.params.id);
+    const { token } = z
+      .object({ token: z.string().trim().max(10000) })
+      .parse(req.body);
+    saveIntegrationToken(vault, integration.provider, token);
+    await refreshIntegrations(store, vault, { fetchFn: integrationFetch });
+    reconcileIntegrationAttention();
+    changed();
+    res.json({
+      provider: integration.provider,
+      configured: integrationTokenConfigured(vault, integration.provider),
+    });
+  });
+  app.put("/api/integrations/:id/scopes", (req, res) => {
+    const integration = must("integrations", req.params.id);
+    const { workspaces } = z
+      .object({ workspaces: z.array(z.string().max(1000)).max(20) })
+      .parse(req.body);
+    const scopes = [...new Set(workspaces.filter(Boolean).map(workspace))];
+    for (const scopedWorkspace of scopes)
+      if (
+        !store.one("SELECT id FROM project_profiles WHERE workspace=?", [
+          scopedWorkspace,
+        ])
+      )
+        throw new Error(
+          "Save this project as a profile before assigning an integration to it.",
+        );
+    store.run(
+      "UPDATE integrations SET workspace_scope_json=?,updated_at=? WHERE id=?",
+      [JSON.stringify(scopes), now(), integration.id],
+    );
+    reconcileIntegrationAttention();
+    changed();
+    res.json({ ...integration, workspace_scope_json: JSON.stringify(scopes) });
   });
   app.post("/api/tasks/:id/github-pull-request", async (req, res) => {
     const task = must("tasks", req.params.id);
@@ -522,7 +650,7 @@ export async function createServer({
               connection.url,
               body.name,
               body.arguments,
-              mcpAccessToken(connection, vault),
+              await usableMcpAccessToken(connection),
             );
       const summary = JSON.stringify(result).slice(0, 2000);
       store.run(
@@ -590,7 +718,7 @@ export async function createServer({
               connection.url,
               body.name,
               body.arguments,
-              mcpAccessToken(connection, vault),
+              await usableMcpAccessToken(connection),
             );
       const output = JSON.stringify(result, null, 2).slice(0, 200000);
       store.transaction(() => {
@@ -1397,6 +1525,38 @@ export async function createServer({
     );
     res.json({ since, outcomes, verifiedCount: outcomes.length });
   });
+  app.get("/api/digest/weekly/receipt", (req, res) => {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const outcomes = store.all(
+      `SELECT t.title,t.completed_at,
+        (SELECT COUNT(*) FROM evidence e WHERE e.task_id=t.id AND e.status='pass') evidence_count
+       FROM tasks t
+       WHERE t.verification='verified' AND t.completed_at>=? ORDER BY t.completed_at DESC`,
+      [since],
+    );
+    const receipt = [
+      "# Roster weekly receipt",
+      "",
+      `Period: ${new Date(since).toLocaleDateString()} to ${new Date().toLocaleDateString()}`,
+      "",
+      `Verified outcomes: ${outcomes.length}`,
+      "",
+      ...(outcomes.length
+        ? outcomes.flatMap((outcome) => [
+            `## ${outcome.title}`,
+            "",
+            `Completed: ${new Date(outcome.completed_at).toLocaleString()}`,
+            `Passing evidence: ${outcome.evidence_count}`,
+            "",
+          ])
+        : ["No verified outcomes were recorded during this period.", ""]),
+    ].join("\n");
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=Roster-weekly-receipt.md",
+    );
+    res.type("text/markdown").send(receipt);
+  });
   app.get("/api/search", (req, res) => {
     const q = z
       .string()
@@ -1529,9 +1689,34 @@ export async function createServer({
     throw error;
   }
   engine.detect().catch(() => {});
-  refreshIntegrations(store)
-    .then(changed)
+  refreshIntegrations(store, vault, { fetchFn: integrationFetch })
+    .then(() => {
+      reconcileIntegrationAttention();
+      changed();
+    })
     .catch(() => {});
+  const integrationHeartbeat = setInterval(
+    () => {
+      const before = JSON.stringify(
+        store.all(
+          "SELECT provider,status,detail FROM integrations ORDER BY provider",
+        ),
+      );
+      refreshIntegrations(store, vault, { fetchFn: integrationFetch })
+        .then(() => {
+          reconcileIntegrationAttention();
+          const after = JSON.stringify(
+            store.all(
+              "SELECT provider,status,detail FROM integrations ORDER BY provider",
+            ),
+          );
+          if (before !== after) changed();
+        })
+        .catch(() => {});
+    },
+    5 * 60 * 1000,
+  );
+  integrationHeartbeat.unref();
   const githubHeartbeat = setInterval(() => {
     githubOwnership
       .refresh()
@@ -1548,6 +1733,7 @@ export async function createServer({
     url: `http://127.0.0.1:${server.address().port}`,
     async close() {
       clearInterval(heartbeat);
+      clearInterval(integrationHeartbeat);
       clearInterval(githubHeartbeat);
       await engine.close();
       for (const res of clients) res.end();

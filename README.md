@@ -69,7 +69,11 @@ Provider credentials are never stored in SQLite or returned through application 
 
 ## Engineering integrations
 
-Roster maintains a local registry for GitHub, Playwright, Sentry, Vercel, CodeRabbit, Linear, Supabase, Slack, and Notion. Each integration has a narrow capability catalog and an approval-aware risk class. The app detects local GitHub, Vercel, CodeRabbit, Supabase, and Playwright tooling. Services that need an account remain clearly marked as unavailable or sign-in required until connected.
+Roster maintains a local registry for GitHub, Playwright, Sentry, Vercel, CodeRabbit, Linear, Supabase, Slack, and Notion. Each integration has a narrow capability catalog and an approval-aware risk class. The app checks local GitHub, Vercel, Supabase, CodeRabbit, and Playwright tooling, including account state where the CLI supports it. Services that need an account remain clearly marked as unavailable or sign-in required until connected.
+
+Integrations can be restricted to saved project profiles from Settings. Roster keeps that scope alongside each connection so project-specific work does not accidentally inherit unrelated external systems.
+
+Sentry, Linear, Slack, and Notion can be connected with an access token from Settings. Roster stores those tokens in the desktop credential vault, validates only their account access, and never writes them to SQLite or returns them through the local API. GitHub, Vercel, Supabase, CodeRabbit, and Playwright retain their local CLI-based setup paths.
 
 When GitHub CLI is authenticated, a completed Git-backed task can track its pull request. Roster records the pull request relationship locally, checks review, CI, conflict, and merge state, and puts only actionable changes in Needs You. Tracking is read-only. A separate, explicit desktop action can validate the task worktree, commit its candidate changes, push its task branch without force options, and open a pull request. Roster never silently merges it.
 

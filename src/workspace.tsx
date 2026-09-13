@@ -98,6 +98,135 @@ function McpScopeEditor({
     </details>
   );
 }
+function IntegrationScopeEditor({
+  integrationId,
+  scopeJson,
+  profiles,
+  act,
+}: {
+  integrationId: string;
+  scopeJson: string;
+  profiles: State["projectProfiles"];
+  act: Props["act"];
+}) {
+  const [scopes, setScopes] = useState(() => workspaceScopes(scopeJson));
+  useEffect(() => setScopes(workspaceScopes(scopeJson)), [scopeJson]);
+  return (
+    <details>
+      <summary>Project access</summary>
+      <small>
+        Restrict this integration to selected project profiles. Leave empty to
+        keep it available globally.
+      </small>
+      {profiles.length ? (
+        <form
+          className="field"
+          onSubmit={(event) => {
+            event.preventDefault();
+            act(() =>
+              api(`/integrations/${integrationId}/scopes`, "PUT", {
+                workspaces: scopes,
+              }),
+            );
+          }}
+        >
+          {profiles.map((profile) => (
+            <label key={profile.workspace}>
+              <input
+                type="checkbox"
+                checked={scopes.includes(profile.workspace)}
+                onChange={(event) =>
+                  setScopes((current) =>
+                    event.target.checked
+                      ? [...new Set([...current, profile.workspace])]
+                      : current.filter((scope) => scope !== profile.workspace),
+                  )
+                }
+              />
+              {profile.name}
+            </label>
+          ))}
+          <button className="text-button">Save project access</button>
+        </form>
+      ) : (
+        <small>Save a project profile before assigning project access.</small>
+      )}
+    </details>
+  );
+}
+function IntegrationTokenEditor({
+  integration,
+  act,
+  notify,
+}: {
+  integration: State["integrations"][number];
+  act: Props["act"];
+  notify: Props["notify"];
+}) {
+  const [token, setToken] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  if (!integration.credential_configurable) return null;
+  const save = async (value: string) => {
+    setSaving(true);
+    setError("");
+    try {
+      await act(() =>
+        api(`/integrations/${integration.id}/token`, "PUT", { token: value }),
+      );
+      setToken("");
+      notify(
+        value
+          ? `${integration.name} access token saved securely.`
+          : `${integration.name} access token removed.`,
+      );
+    } catch (reason) {
+      setError((reason as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <details>
+      <summary>Connect account</summary>
+      <small>
+        Your access token is stored in this desktop's encrypted credential vault
+        and is never added to the Roster database.
+      </small>
+      <form
+        className="field"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save(token);
+        }}
+      >
+        <input
+          aria-label={`${integration.name} access token`}
+          autoComplete="off"
+          maxLength={10000}
+          placeholder={`${integration.name} access token`}
+          type="password"
+          value={token}
+          onChange={(event) => setToken(event.target.value)}
+        />
+        <button className="text-button" disabled={saving || !token.trim()}>
+          {saving ? "Checking account..." : "Save and check account"}
+        </button>
+      </form>
+      {integration.credential_configured && (
+        <button
+          className="text-button"
+          disabled={saving}
+          onClick={() => void save("")}
+          type="button"
+        >
+          Remove saved token
+        </button>
+      )}
+      {error && <small className="form-error">{error}</small>}
+    </details>
+  );
+}
 export default function WorkspaceView(p: Props) {
   const {
     view,
@@ -629,6 +758,9 @@ function ActivityView({ state }: { state: State }) {
             {digest.verifiedCount} verified outcome
             {digest.verifiedCount === 1 ? "" : "s"} with persisted evidence.
           </p>
+          <a className="text-button" href="/api/digest/weekly/receipt" download>
+            <Download size={13} /> Download weekly receipt
+          </a>
           {digest.outcomes.map((outcome) => (
             <div className="detail-pair" key={outcome.id}>
               <span>{outcome.evidence_count} checks</span>
@@ -792,20 +924,60 @@ function SettingsView({ state, act, notify, refresh }: Props) {
             Connected tools supply scoped context and verification evidence.
             Roster keeps external writes behind its approval policy.
           </p>
-          {state.integrations.map((integration) => (
-            <div className="provider-row" key={integration.id}>
-              <span className="provider-logo">
-                <Code2 size={21} />
-              </span>
-              <div>
-                <strong>{integration.name}</strong>
-                <small>{integration.detail}</small>
+          {state.integrations.map((integration) => {
+            let capabilities: string[] = [];
+            let risks: Record<string, string> = {};
+            try {
+              capabilities = JSON.parse(integration.capabilities_json || "[]");
+              risks = JSON.parse(integration.risk_policy_json || "{}");
+            } catch {
+              // A malformed local record should not hide the integration controls.
+            }
+            return (
+              <div className="provider-row" key={integration.id}>
+                <span className="provider-logo">
+                  <Code2 size={21} />
+                </span>
+                <div>
+                  <strong>{integration.name}</strong>
+                  <small>{integration.detail}</small>
+                  <details>
+                    <summary>Connection details</summary>
+                    <small>Connection type: {integration.type}</small>
+                    <small>
+                      Capabilities:{" "}
+                      {capabilities.length
+                        ? capabilities.join(", ")
+                        : "None discovered"}
+                    </small>
+                    <small>
+                      Risk policy:{" "}
+                      {Object.entries(risks)
+                        .map(
+                          ([risk, policy]) =>
+                            `${risk.replaceAll("_", " ")}: ${policy.replaceAll("_", " ")}`,
+                        )
+                        .join(" · ") || "No policy available"}
+                    </small>
+                  </details>
+                  <IntegrationScopeEditor
+                    integrationId={integration.id}
+                    scopeJson={integration.workspace_scope_json}
+                    profiles={state.projectProfiles}
+                    act={act}
+                  />
+                  <IntegrationTokenEditor
+                    integration={integration}
+                    act={act}
+                    notify={notify}
+                  />
+                </div>
+                <span className="status-pill">
+                  {statusLabel[integration.status] || integration.status}
+                </span>
               </div>
-              <span className="status-pill">
-                {statusLabel[integration.status] || integration.status}
-              </span>
-            </div>
-          ))}
+            );
+          })}
           <button
             className="text-button"
             onClick={() => act(() => api("/integrations/refresh", "POST", {}))}

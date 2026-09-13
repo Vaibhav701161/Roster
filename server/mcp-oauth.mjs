@@ -132,8 +132,8 @@ export async function beginMcpAuthorization({
   authorization.searchParams.set("code_challenge_method", "S256");
   authorization.searchParams.set("state", state);
   authorization.searchParams.set("resource", connection.url);
-  const scopes = Array.isArray(previous.scopes_supported)
-    ? previous.scopes_supported
+  const scopes = Array.isArray(previous.oauth?.scopes)
+    ? previous.oauth.scopes
         .filter((scope) => typeof scope === "string")
         .join(" ")
     : "";
@@ -221,6 +221,69 @@ export async function completeMcpAuthorization({
         metadata_url: discovery.metadataUrl,
         client_id: oauth.client_id,
         connected_at: new Date().toISOString(),
+        expires_at:
+          typeof token.expires_in === "number"
+            ? Date.now() + token.expires_in * 1000
+            : null,
+      },
+    },
+  };
+}
+
+export async function refreshMcpAuthorization({ connection, vault }) {
+  let record = {};
+  try {
+    record = JSON.parse(connection.auth_metadata_json || "{}");
+  } catch {
+    throw new Error(
+      "Saved authorization metadata is invalid. Connect the MCP server again.",
+    );
+  }
+  const oauth = record.oauth || {};
+  const refreshToken = vault.getNamed(keyFor(connection.id, "refresh"));
+  if (!oauth.issuer || !oauth.client_id || !refreshToken)
+    throw new Error("This MCP connection needs to be authorized again.");
+  const discovery = await authorizationServerMetadata(oauth.issuer);
+  if (!sameValue(oauth.issuer, discovery.issuer))
+    throw new Error(
+      "The authorization server changed. Connect the MCP server again.",
+    );
+  const response = await fetch(discovery.metadata.token_endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: oauth.client_id,
+      resource: connection.url,
+    }),
+    redirect: "manual",
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok)
+    throw new Error(
+      "The authorization server could not refresh this MCP connection.",
+    );
+  const token = await response.json();
+  if (typeof token?.access_token !== "string" || !token.access_token)
+    throw new Error(
+      "The authorization server did not return a refreshed access token.",
+    );
+  vault.setNamed(keyFor(connection.id, "access"), token.access_token);
+  if (typeof token.refresh_token === "string")
+    vault.setNamed(keyFor(connection.id, "refresh"), token.refresh_token);
+  return {
+    accessToken: token.access_token,
+    authMetadata: {
+      ...record,
+      oauth: {
+        ...oauth,
+        issuer: discovery.issuer,
+        metadata_url: discovery.metadataUrl,
+        refreshed_at: new Date().toISOString(),
         expires_at:
           typeof token.expires_in === "number"
             ? Date.now() + token.expires_in * 1000

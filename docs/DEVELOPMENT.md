@@ -26,4 +26,6 @@ The desktop application is the acceptance target. Browser automation exists only
 
 The macOS target is macOS 13 Ventura or newer. Build Apple Silicon and Intel artifacts on macOS with `npm run package:mac:arm64` and `npm run package:mac:x64`. The `macos-release` GitHub Actions workflow uses current architecture-specific macOS runners and signs only when its certificate secrets are present.
 
+Tag pushes and manual workflow runs build Windows x64 and Linux x64 artifacts through the `desktop-release` workflow. It uploads the NSIS installer, AppImage, and deb package as workflow artifacts. The macOS workflow remains separate because its signing and notarization requirements need Apple credentials.
+
 Public direct distribution requires a Developer ID Application certificate and Apple notarization credentials. Set those only in the CI secret store. electron-builder detects Apple API-key notarization credentials from `APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`; a missing signing identity intentionally leaves a developer build unsigned. Do not claim Gatekeeper acceptance until the signed DMG has been installed and tested from Finder on that architecture.

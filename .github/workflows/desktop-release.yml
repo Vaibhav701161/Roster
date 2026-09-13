@@ -1,0 +1,43 @@
+name: Desktop release artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-latest
+            command: npm run package:win
+            artifacts: dist/*.exe
+          - name: Linux x64
+            runner: ubuntu-latest
+            command: npm run package:linux
+            artifacts: |
+              dist/*.AppImage
+              dist/*.deb
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: ${{ matrix.command }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Roster-${{ matrix.name }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error

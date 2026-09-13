@@ -5,6 +5,7 @@ import { id, now } from "./store.mjs";
 
 const exec = promisify(execFile);
 const require = createRequire(import.meta.url);
+const tokenKey = (provider) => `integration:${provider}:token`;
 const catalog = [
   {
     provider: "github",
@@ -143,6 +144,81 @@ const catalog = [
   },
 ];
 
+const tokenProviders = {
+  sentry: {
+    endpoint: "https://sentry.io/api/0/",
+    headers: () => ({}),
+    valid: (response) => response.ok,
+    name: "Sentry",
+  },
+  linear: {
+    endpoint: "https://api.linear.app/graphql",
+    method: "POST",
+    headers: () => ({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ query: "query RosterViewer { viewer { id } }" }),
+    valid: (response, payload) => response.ok && !!payload?.data?.viewer?.id,
+    name: "Linear",
+  },
+  slack: {
+    endpoint: "https://slack.com/api/auth.test",
+    headers: () => ({}),
+    valid: (response, payload) => response.ok && payload?.ok === true,
+    name: "Slack",
+  },
+  notion: {
+    endpoint: "https://api.notion.com/v1/users/me",
+    headers: () => ({ "Notion-Version": "2022-06-28" }),
+    valid: (response) => response.ok,
+    name: "Notion",
+  },
+};
+
+function namedSecret(vault, provider) {
+  return vault?.getNamed?.(tokenKey(provider)) || "";
+}
+
+async function probeTokenProvider(provider, token, fetchFn = fetch) {
+  const config = tokenProviders[provider];
+  if (!config) return null;
+  if (!token)
+    return {
+      status: "authentication_required",
+      detail: `Add a ${config.name} access token to connect this desktop.`,
+    };
+  try {
+    const response = await fetchFn(config.endpoint, {
+      method: config.method || "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+        ...config.headers(),
+      },
+      ...(config.body ? { body: config.body } : {}),
+      signal: AbortSignal.timeout(7000),
+    });
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      // A successful account probe does not require a response body.
+    }
+    if (config.valid(response, payload))
+      return {
+        status: "connected",
+        detail: `${config.name} access token is connected for this desktop.`,
+      };
+    return {
+      status: "authentication_required",
+      detail: `${config.name} rejected the saved access token. Update it to reconnect.`,
+    };
+  } catch {
+    return {
+      status: "unavailable",
+      detail: `${config.name} could not be reached from this desktop. Try refreshing when it is online.`,
+    };
+  }
+}
+
 async function commandStatus(command, args = ["--version"]) {
   try {
     await exec(command, args, { windowsHide: true, timeout: 5000 });
@@ -152,7 +228,20 @@ async function commandStatus(command, args = ["--version"]) {
   }
 }
 
-async function detect(entry) {
+async function commandOutput(command, args) {
+  try {
+    const { stdout } = await exec(command, args, {
+      windowsHide: true,
+      timeout: 10000,
+      maxBuffer: 100000,
+    });
+    return String(stdout).trim();
+  } catch {
+    return "";
+  }
+}
+
+export async function detectIntegration(entry, { vault, fetchFn } = {}) {
   if (entry.provider === "github") {
     if (!(await commandStatus("gh")))
       return {
@@ -183,10 +272,47 @@ async function detect(entry) {
       };
     }
   }
+  if (entry.provider === "vercel") {
+    if (!(await commandStatus("vercel")))
+      return {
+        status: "unavailable",
+        detail: "Vercel requires its local CLI and an authenticated account.",
+      };
+    const account = await commandOutput("vercel", ["whoami"]);
+    return account
+      ? {
+          status: "connected",
+          detail: `Vercel CLI is authenticated as ${account.slice(0, 160)}.`,
+        }
+      : {
+          status: "authentication_required",
+          detail: "Run vercel login to connect Vercel.",
+        };
+  }
+  if (entry.provider === "supabase") {
+    if (!(await commandStatus("supabase")))
+      return {
+        status: "unavailable",
+        detail: "Supabase requires its local CLI and an authenticated account.",
+      };
+    return (await commandOutput("supabase", ["projects", "list"]))
+      ? {
+          status: "connected",
+          detail: "Supabase CLI is authenticated for this desktop account.",
+        }
+      : {
+          status: "authentication_required",
+          detail: "Run supabase login to connect Supabase.",
+        };
+  }
+  if (tokenProviders[entry.provider])
+    return probeTokenProvider(
+      entry.provider,
+      namedSecret(vault, entry.provider),
+      fetchFn,
+    );
   const commands = {
-    vercel: "vercel",
     coderabbit: "coderabbit",
-    supabase: "supabase",
   };
   if (commands[entry.provider])
     return (await commandStatus(commands[entry.provider]))
@@ -204,9 +330,30 @@ async function detect(entry) {
   };
 }
 
-export async function refreshIntegrations(store) {
+export function integrationTokenConfigured(vault, provider) {
+  return !!namedSecret(vault, provider);
+}
+
+export function saveIntegrationToken(vault, provider, token) {
+  if (!tokenProviders[provider])
+    throw new Error("This integration does not accept an access token.");
+  if (!vault?.setNamed)
+    throw new Error(
+      "Secure credential storage is unavailable on this desktop.",
+    );
+  vault.setNamed(tokenKey(provider), token.trim());
+}
+
+export function supportsIntegrationToken(provider) {
+  return !!tokenProviders[provider];
+}
+
+export async function refreshIntegrations(store, vault, options = {}) {
   const results = await Promise.all(
-    catalog.map(async (entry) => ({ entry, state: await detect(entry) })),
+    catalog.map(async (entry) => ({
+      entry,
+      state: await detectIntegration(entry, { vault, ...options }),
+    })),
   );
   store.transaction(() => {
     for (const { entry, state } of results) {

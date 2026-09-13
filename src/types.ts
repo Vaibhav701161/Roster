@@ -122,6 +122,10 @@ export type Integration = {
   status: string;
   detail: string;
   capabilities_json: string;
+  risk_policy_json: string;
+  workspace_scope_json: string;
+  credential_configurable: boolean;
+  credential_configured: boolean;
   updated_at: string;
 };
 export type McpConnection = {

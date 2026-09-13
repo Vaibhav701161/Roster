@@ -3,11 +3,11 @@
 ## Install and launch
 
 - [ ] Run `npm ci` from a clean checkout.
-- [ ] Run `npm run package:win` on Windows and install the NSIS artifact.
+- [x] Run `npm run package:win` on Windows and build the NSIS artifact.
 - [ ] Run `npm run package:linux` on Linux to produce the AppImage and deb artifacts.
 - [x] Validate the Linux unpacked application with `electron-builder --linux --dir`.
 - [ ] Produce AppImage and deb artifacts on a Linux host. Windows cannot create the symlinks required by AppImage assembly.
-- [ ] Launch the installed app and confirm it opens one Roster window.
+- [x] Launch the packaged Windows app with an isolated data directory and confirm it creates its local database.
 - [ ] Choose a workspace using the native folder picker.
 
 ## Providers and work

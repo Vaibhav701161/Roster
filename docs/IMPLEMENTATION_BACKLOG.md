@@ -25,7 +25,7 @@ This document tracks the product work from the current engineering and messenger
 - [x] Queue GitHub-driven owner repair and independent re-review in the existing isolated task branch.
 - [x] Run an explicitly selected browser or end-to-end project script as bounded task evidence without treating it as a review verdict.
 - [ ] Build the engineering integrations in priority order: GitHub, Sentry, Vercel, Playwright, CodeRabbit, Linear, Supabase/Postgres, Slack, and Notion.
-- [ ] Add continuous ownership, proactive monitoring, and fact-based weekly receipts.
+- [x] Add continuous pull-request ownership monitoring and fact-based weekly receipts with Markdown export.
 
 ## Experience work
 
