@@ -83,15 +83,18 @@ function initialization() {
   };
 }
 
-const mcpHeaders = {
-  Accept: "application/json, text/event-stream",
-  "Content-Type": "application/json",
-  "MCP-Protocol-Version": protocolVersion,
-};
-
-function sessionHeaders(sessionId = "") {
+function mcpHeaders(accessToken = "") {
   return {
-    ...mcpHeaders,
+    Accept: "application/json, text/event-stream",
+    "Content-Type": "application/json",
+    "MCP-Protocol-Version": protocolVersion,
+    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+  };
+}
+
+function sessionHeaders(sessionId = "", accessToken = "") {
+  return {
+    ...mcpHeaders(accessToken),
     ...(sessionId ? { "Mcp-Session-Id": sessionId } : {}),
   };
 }
@@ -150,10 +153,10 @@ async function protectedMetadata(endpoint, challenge) {
   return null;
 }
 
-async function initialize(url) {
+async function initialize(url, accessToken = "") {
   const response = await request(url, {
     method: "POST",
-    headers: mcpHeaders,
+    headers: mcpHeaders(accessToken),
     body: mcpRequest(),
   });
   if (!response.ok)
@@ -171,15 +174,15 @@ async function initialize(url) {
   };
 }
 
-async function discoverTools(url, sessionId = "") {
+async function discoverTools(url, sessionId = "", accessToken = "") {
   await request(url, {
     method: "POST",
-    headers: sessionHeaders(sessionId),
+    headers: sessionHeaders(sessionId, accessToken),
     body: rpc("notifications/initialized"),
   });
   const response = await request(url, {
     method: "POST",
-    headers: sessionHeaders(sessionId),
+    headers: sessionHeaders(sessionId, accessToken),
     body: rpc("tools/list", {}, "roster-tools"),
   });
   if (!response.ok) return [];
@@ -193,19 +196,19 @@ async function discoverTools(url, sessionId = "") {
     : [];
 }
 
-export async function callMcpTool(urlValue, name, args = {}) {
+export async function callMcpTool(urlValue, name, args = {}, accessToken = "") {
   const url = await canonicalMcpUrl(urlValue);
-  const initialized = await initialize(url);
+  const initialized = await initialize(url, accessToken);
   if (!initialized.result.capabilities?.tools)
     throw new Error("This MCP server does not advertise tool support.");
   await request(url, {
     method: "POST",
-    headers: sessionHeaders(initialized.sessionId),
+    headers: sessionHeaders(initialized.sessionId, accessToken),
     body: rpc("notifications/initialized"),
   });
   const response = await request(url, {
     method: "POST",
-    headers: sessionHeaders(initialized.sessionId),
+    headers: sessionHeaders(initialized.sessionId, accessToken),
     body: rpc("tools/call", { name, arguments: args }, "roster-tool-call"),
   });
   if (!response.ok)
@@ -379,11 +382,11 @@ export async function callLocalMcpTool(config, name, args = {}) {
   return result;
 }
 
-export async function discoverMcp(value) {
+export async function discoverMcp(value, accessToken = "") {
   const url = await canonicalMcpUrl(value);
   const response = await request(url, {
     method: "POST",
-    headers: mcpHeaders,
+    headers: mcpHeaders(accessToken),
     body: mcpRequest(),
   });
   const connectionId = crypto
@@ -427,7 +430,7 @@ export async function discoverMcp(value) {
   let toolDetail = "";
   if (result.capabilities?.tools) {
     try {
-      tools = await discoverTools(url, sessionId);
+      tools = await discoverTools(url, sessionId, accessToken);
     } catch {
       toolDetail =
         " The server accepted initialization, but its tool registry was unavailable.";

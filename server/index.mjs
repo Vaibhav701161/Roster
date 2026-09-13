@@ -22,6 +22,11 @@ import {
   discoverMcp,
 } from "./mcp.mjs";
 import {
+  beginMcpAuthorization,
+  completeMcpAuthorization,
+  mcpAccessToken,
+} from "./mcp-oauth.mjs";
+import {
   createGithubOwnership,
   createGithubPullRequest,
   publishGithubTaskBranch,
@@ -373,6 +378,84 @@ export async function createServer({
     changed();
     res.json(connection);
   });
+  app.post("/api/mcp/:id/authorize", async (req, res) => {
+    const connection = must("mcp_connections", req.params.id);
+    if (connection.transport !== "remote")
+      throw new Error(
+        "Local MCP servers do not require browser authorization.",
+      );
+    if (connection.status !== "authentication_required")
+      throw new Error(
+        "Discover an MCP server that requires authorization first.",
+      );
+    const redirectUri = `http://${req.headers.host}/api/mcp/${connection.id}/oauth/callback`;
+    const authorization = await beginMcpAuthorization({
+      connection,
+      vault,
+      redirectUri,
+    });
+    store.run(
+      "UPDATE mcp_connections SET auth_metadata_json=?,detail=?,updated_at=? WHERE id=?",
+      [
+        JSON.stringify(authorization.authMetadata),
+        "Authorization is open in your browser. Finish sign-in there, then return to Roster.",
+        now(),
+        connection.id,
+      ],
+    );
+    changed();
+    res.json({ authorizationUrl: authorization.authorizationUrl });
+  });
+  app.get("/api/mcp/:id/oauth/callback", async (req, res) => {
+    const connection = must("mcp_connections", req.params.id);
+    if (req.query.error)
+      throw new Error(
+        "Authorization was not completed by the account provider.",
+      );
+    const code = z
+      .string()
+      .min(1)
+      .max(10000)
+      .parse(req.query.code || "");
+    const state = z
+      .string()
+      .min(1)
+      .max(1000)
+      .parse(req.query.state || "");
+    const redirectUri = `http://${req.headers.host}/api/mcp/${connection.id}/oauth/callback`;
+    const completed = await completeMcpAuthorization({
+      connection,
+      vault,
+      code,
+      state,
+      redirectUri,
+    });
+    const refreshed = await discoverMcp(connection.url, completed.accessToken);
+    if (refreshed.status !== "available")
+      throw new Error(
+        "Authorization succeeded but the MCP server did not accept the access token.",
+      );
+    store.run(
+      "UPDATE mcp_connections SET server_name=?,status=?,detail=?,protocol_version=?,capabilities_json=?,auth_metadata_json=?,tools_json=?,updated_at=? WHERE id=?",
+      [
+        refreshed.serverName,
+        refreshed.status,
+        "Authorization is connected. The server accepted a token-backed initialization request.",
+        refreshed.protocolVersion,
+        JSON.stringify(refreshed.capabilities),
+        JSON.stringify(completed.authMetadata),
+        JSON.stringify(refreshed.tools || []),
+        now(),
+        connection.id,
+      ],
+    );
+    changed();
+    res
+      .type("html")
+      .send(
+        `<!doctype html><title>Roster connected</title><main><h1>Connected</h1><p>You can close this tab and return to Roster.</p></main>`,
+      );
+  });
   app.put("/api/mcp/:id/scopes", (req, res) => {
     const connection = must("mcp_connections", req.params.id);
     const { workspaces } = z
@@ -435,7 +518,12 @@ export async function createServer({
               body.name,
               body.arguments,
             )
-          : await callMcpTool(connection.url, body.name, body.arguments);
+          : await callMcpTool(
+              connection.url,
+              body.name,
+              body.arguments,
+              mcpAccessToken(connection, vault),
+            );
       const summary = JSON.stringify(result).slice(0, 2000);
       store.run(
         "UPDATE mcp_tool_calls SET status='completed',summary=?,completed_at=? WHERE id=?",
@@ -498,7 +586,12 @@ export async function createServer({
               body.name,
               body.arguments,
             )
-          : await callMcpTool(connection.url, body.name, body.arguments);
+          : await callMcpTool(
+              connection.url,
+              body.name,
+              body.arguments,
+              mcpAccessToken(connection, vault),
+            );
       const output = JSON.stringify(result, null, 2).slice(0, 200000);
       store.transaction(() => {
         store.run(

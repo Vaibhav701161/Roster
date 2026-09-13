@@ -19,6 +19,7 @@ AI coding tools are most useful when their work is easy to direct, review, and c
 - Use bounded repair and re-review cycles when independent verification finds a problem.
 - Resolve approvals and verification blockers in one Needs You inbox.
 - Inspect actual Git changes relative to the task's starting revision.
+- Dictate a message into the editable composer when the desktop runtime supports speech recognition.
 - Resume interrupted work after a restart with its saved conversation and instructions.
 - Keep conversations, attachments, task history, and local data under your control.
 
@@ -74,7 +75,7 @@ When GitHub CLI is authenticated, a completed Git-backed task can track its pull
 
 For actionable GitHub CI, review, conflict, or closure findings, Needs You can queue a bounded repair for the original owner in the same task branch. If the original work had an independent reviewer, Roster queues that reviewer again after the repair. The repaired branch must still be explicitly published to update the pull request.
 
-MCP servers can be discovered from Settings. Remote endpoints use HTTPS, except loopback HTTP for local development, and local stdio servers run as short-lived direct processes without a shell. Discovery records capabilities and protected-resource authorization metadata without sending credentials. A user can run only a discovered tool from Settings with explicit JSON arguments; Roster stores an audit record of the tool name, argument keys, status, and bounded result summary. OAuth authorization remains unavailable until a connected authorization flow is implemented.
+MCP servers can be discovered from Settings. Remote endpoints use HTTPS, except loopback HTTP for local development, and local stdio servers run as short-lived direct processes without a shell. Discovery records capabilities and protected-resource authorization metadata without sending credentials. Protected servers can use a browser authorization handoff with PKCE S256 and dynamic client registration where the authorization server supports it. Tokens are isolated in the local credential vault and are never written to SQLite. A user can run only a discovered tool from Settings with explicit JSON arguments; Roster stores an audit record of the tool name, argument keys, status, and bounded result summary.
 
 An MCP server can be restricted to saved project profiles. Once scoped, tool calls must select one of those project folders, which keeps a connected server from being reused across unrelated workspaces.
 

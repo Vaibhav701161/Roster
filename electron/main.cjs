@@ -10,6 +10,7 @@ const {
 } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const { pathToFileURL } = require("node:url");
 
 let service,
@@ -173,25 +174,42 @@ app
     const dataDir = process.env.ROSTER_DATA_DIR || app.getPath("userData");
     fs.mkdirSync(dataDir, { recursive: true });
     const secretPath = path.join(dataDir, "provider-key.enc");
+    const namedSecretPath = (key) =>
+      path.join(
+        dataDir,
+        `secret-${crypto.createHash("sha256").update(String(key)).digest("hex")}.enc`,
+      );
+    const readSecret = (filename) => {
+      if (!fs.existsSync(filename) || !safeStorage.isEncryptionAvailable())
+        return "";
+      try {
+        return safeStorage.decryptString(fs.readFileSync(filename));
+      } catch {
+        return "";
+      }
+    };
+    const writeSecret = (filename, value) => {
+      if (!safeStorage.isEncryptionAvailable())
+        throw new Error(
+          "OS credential encryption is unavailable. Set OPENAI_API_KEY instead.",
+        );
+      if (value) fs.writeFileSync(filename, safeStorage.encryptString(value));
+      else if (fs.existsSync(filename)) fs.unlinkSync(filename);
+    };
     const vault = {
       get() {
-        if (!fs.existsSync(secretPath) || !safeStorage.isEncryptionAvailable())
-          return "";
-        try {
-          return safeStorage.decryptString(fs.readFileSync(secretPath));
-        } catch {
-          return "";
-        }
+        return readSecret(secretPath);
       },
       set(value) {
-        if (!safeStorage.isEncryptionAvailable())
-          throw new Error(
-            "OS credential encryption is unavailable. Set OPENAI_API_KEY instead.",
-          );
-        if (value)
-          fs.writeFileSync(secretPath, safeStorage.encryptString(value));
-        else if (fs.existsSync(secretPath)) fs.unlinkSync(secretPath);
+        writeSecret(secretPath, value);
       },
+      getNamed(key) {
+        return readSecret(namedSecretPath(key));
+      },
+      setNamed(key, value) {
+        writeSecret(namedSecretPath(key), value);
+      },
+      mode: "encrypted",
     };
     const { createServer } = await import(
       pathToFileURL(path.join(__dirname, "../server/index.mjs"))

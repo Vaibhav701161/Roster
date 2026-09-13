@@ -2804,6 +2804,10 @@ input[type="checkbox"] {
   background: #f7e9e3;
   color: #8f4d38;
 }
+.dictating {
+  color: var(--green);
+  background: var(--green-soft);
+}
 [data-theme="dark"] .avatar {
   filter: none;
 }

@@ -99,7 +99,17 @@ function McpScopeEditor({
   );
 }
 export default function WorkspaceView(p: Props) {
-  const { view, state, act, openChat, onWorker, onTeam, onTask } = p;
+  const {
+    view,
+    state,
+    act,
+    openChat,
+    onWorker,
+    onTeam,
+    onTask,
+    refresh,
+    notify,
+  } = p;
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState("All"),
     [remove, setRemove] = useState<Agent | null>(null),
@@ -649,7 +659,7 @@ function ActivityView({ state }: { state: State }) {
     </>
   );
 }
-function SettingsView({ state, act, notify }: Props) {
+function SettingsView({ state, act, notify, refresh }: Props) {
   const [testing, setTesting] = useState(""),
     [result, setResult] = useState(""),
     [providerForm, setProviderForm] = useState(!!state.settings.compatible),
@@ -915,6 +925,29 @@ function SettingsView({ state, act, notify }: Props) {
                       : "Remote HTTP"}
                   </small>
                   <small>{connection.detail}</small>
+                  {connection.transport === "remote" &&
+                    connection.status === "authentication_required" && (
+                      <button
+                        className="text-button"
+                        onClick={async () => {
+                          try {
+                            const response = await api<{
+                              authorizationUrl: string;
+                            }>(`/mcp/${connection.id}/authorize`, "POST", {});
+                            window.open(
+                              response.authorizationUrl,
+                              "_blank",
+                              "noopener,noreferrer",
+                            );
+                            await refresh();
+                          } catch (error) {
+                            notify((error as Error).message);
+                          }
+                        }}
+                      >
+                        Connect account
+                      </button>
+                    )}
                   {tools.length ? (
                     <details>
                       <summary>

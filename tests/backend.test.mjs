@@ -1097,6 +1097,8 @@ input.on("line", (line) => {
         : {};
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }) + "\\n");
 });
+
+
 `,
   );
   const f = await fixture(async () => ({ text: "unused" }));
@@ -1117,6 +1119,162 @@ input.on("line", (line) => {
   }
 });
 
+test("protected MCP servers connect with PKCE and keep OAuth tokens out of SQLite", async () => {
+  let tokenRequest;
+  const server = http.createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const raw = Buffer.concat(chunks).toString();
+    const body =
+      req.headers["content-type"]?.includes("application/json") && raw
+        ? JSON.parse(raw)
+        : {};
+    const port = server.address().port;
+    const origin = `http://127.0.0.1:${port}`;
+    if (req.url === "/secure" && req.method === "POST") {
+      if (req.headers.authorization === "Bearer fixture-access-token") {
+        if (body.method === "initialize") {
+          res.setHeader("Content-Type", "application/json");
+          return res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: body.id,
+              result: {
+                protocolVersion: "2025-11-25",
+                serverInfo: { name: "Protected fixture" },
+                capabilities: { tools: {} },
+              },
+            }),
+          );
+        }
+        if (body.method === "tools/list") {
+          res.setHeader("Content-Type", "application/json");
+          return res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: body.id,
+              result: {
+                tools: [
+                  {
+                    name: "secure.read",
+                    description: "Read protected context",
+                    inputSchema: { type: "object" },
+                  },
+                ],
+              },
+            }),
+          );
+        }
+        if (body.method === "tools/call") {
+          assert.equal(body.params.name, "secure.read");
+          res.setHeader("Content-Type", "application/json");
+          return res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: body.id,
+              result: {
+                content: [{ type: "text", text: "Protected context" }],
+              },
+            }),
+          );
+        }
+      }
+      res.writeHead(401, {
+        "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/secure"`,
+      });
+      return res.end();
+    }
+    if (req.url === "/.well-known/oauth-protected-resource/secure") {
+      res.setHeader("Content-Type", "application/json");
+      return res.end(
+        JSON.stringify({
+          resource: `${origin}/secure`,
+          authorization_servers: [`${origin}/issuer`],
+          scopes_supported: ["secure.read"],
+        }),
+      );
+    }
+    if (req.url === "/issuer/.well-known/oauth-authorization-server") {
+      res.setHeader("Content-Type", "application/json");
+      return res.end(
+        JSON.stringify({
+          issuer: `${origin}/issuer`,
+          authorization_endpoint: `${origin}/authorize`,
+          token_endpoint: `${origin}/token`,
+          registration_endpoint: `${origin}/register`,
+          code_challenge_methods_supported: ["S256"],
+        }),
+      );
+    }
+    if (req.url === "/register" && req.method === "POST") {
+      assert.deepEqual(body.redirect_uris.length, 1);
+      res.setHeader("Content-Type", "application/json");
+      return res.end(JSON.stringify({ client_id: "fixture-client" }));
+    }
+    if (req.url === "/token" && req.method === "POST") {
+      tokenRequest = new URLSearchParams(raw);
+      assert.equal(tokenRequest.get("client_id"), "fixture-client");
+      assert.equal(tokenRequest.get("resource"), `${origin}/secure`);
+      assert.ok(tokenRequest.get("code_verifier"));
+      res.setHeader("Content-Type", "application/json");
+      return res.end(
+        JSON.stringify({
+          access_token: "fixture-access-token",
+          refresh_token: "fixture-refresh-token",
+          expires_in: 300,
+        }),
+      );
+    }
+    res.writeHead(404).end();
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const f = await fixture(async () => ({ text: "unused" }));
+  try {
+    const port = server.address().port;
+    const connection = await f.request("/mcp/discover", "POST", {
+      url: `http://127.0.0.1:${port}/secure`,
+    });
+    const authorization = await f.request(
+      `/mcp/${connection.id}/authorize`,
+      "POST",
+      {},
+    );
+    const authorizeUrl = new URL(authorization.authorizationUrl);
+    assert.equal(
+      authorizeUrl.searchParams.get("code_challenge_method"),
+      "S256",
+    );
+    assert.equal(
+      authorizeUrl.searchParams.get("resource"),
+      `http://127.0.0.1:${port}/secure`,
+    );
+    const callback = new URL(authorizeUrl.searchParams.get("redirect_uri"));
+    callback.searchParams.set("code", "fixture-code");
+    callback.searchParams.set("state", authorizeUrl.searchParams.get("state"));
+    const callbackResponse = await fetch(callback);
+    assert.equal(callbackResponse.status, 200);
+    assert.match(await callbackResponse.text(), /Connected/);
+    assert.ok(tokenRequest);
+    const state = await f.request("/state");
+    assert.equal(state.mcpConnections[0].status, "available");
+    const call = await f.request(`/mcp/${connection.id}/tools/call`, "POST", {
+      name: "secure.read",
+      arguments: {},
+    });
+    assert.equal(call.result.content[0].text, "Protected context");
+    const serialized = JSON.stringify(
+      f.app.store.one(
+        "SELECT auth_metadata_json FROM mcp_connections WHERE id=?",
+        [connection.id],
+      ),
+    );
+    assert.ok(!serialized.includes("fixture-access-token"));
+    assert.ok(!serialized.includes("fixture-refresh-token"));
+  } finally {
+    await f.app.close();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
 test("project inspection discovers local scripts and instruction files", async () => {
   const workspace = fs.mkdtempSync(
     path.join(os.tmpdir(), "roster-project-test-"),
@@ -1185,15 +1343,15 @@ test("message reactions are local, durable, and toggleable", async () => {
       "POST",
       { content: "Hello" },
     );
-    await f.request(`/messages/${sent.id}/reactions`, "POST", { emoji: "👍" });
+    await f.request(`/messages/${sent.id}/reactions`, "POST", { emoji: "ðŸ‘" });
     let messages = await f.request(
       `/conversations/${a.conversationId}/messages`,
     );
     assert.deepEqual(
       messages.find((message) => message.id === sent.id).reactions,
-      ["👍"],
+      ["ðŸ‘"],
     );
-    await f.request(`/messages/${sent.id}/reactions`, "POST", { emoji: "👍" });
+    await f.request(`/messages/${sent.id}/reactions`, "POST", { emoji: "ðŸ‘" });
     messages = await f.request(`/conversations/${a.conversationId}/messages`);
     assert.deepEqual(
       messages.find((message) => message.id === sent.id).reactions,

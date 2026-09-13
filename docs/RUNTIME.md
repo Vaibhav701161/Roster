@@ -27,3 +27,7 @@ Configured endpoint credentials are bound to their origin. An environment `OPENA
 ## Approval limits
 
 Command and file-change requests become durable approval cards. Accepting or declining resolves the exact outstanding RPC request. Unknown tool-input requests and broad permission requests are denied, not silently accepted. Roster does not expose an arbitrary shell endpoint through its desktop renderer.
+
+## Protected MCP servers
+
+Roster discovers protected-resource metadata before starting a connection. When a remote server requires authorization, the desktop app opens the server's authorization page and uses an authorization-code flow with PKCE S256 and a loopback callback. It dynamically registers a public client only when the authorization server exposes a registration endpoint. The callback verifies its state and issuer before exchanging the code, then keeps access and refresh tokens in a named local vault entry rather than the workspace database. Authorization servers that do not support PKCE S256 or dynamic registration remain unavailable until they offer a compatible connection method.

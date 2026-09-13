@@ -35,6 +35,7 @@ import {
   ShieldCheck,
   LockKeyhole,
   Square,
+  Mic,
   AlertCircle,
   RefreshCw,
   Sun,
@@ -264,6 +265,7 @@ export function App() {
     [taskId, setTaskId] = useState<string | null>(null),
     [reply, setReply] = useState<Message | null>(null),
     [attachments, setAttachments] = useState<Attachment[]>([]),
+    [dictating, setDictating] = useState(false),
     [searchOpen, setSearchOpen] = useState(false),
     [menu, setMenu] = useState(false),
     [emoji, setEmoji] = useState(false),
@@ -533,6 +535,51 @@ export function App() {
     } finally {
       if (fileInput.current) fileInput.current.value = "";
     }
+  }
+  function dictate() {
+    type Dictation = {
+      continuous: boolean;
+      interimResults: boolean;
+      lang: string;
+      start: () => void;
+      onresult: (event: {
+        results: ArrayLike<ArrayLike<{ transcript: string }>>;
+      }) => void;
+      onend: () => void;
+      onerror: () => void;
+    };
+    type DictationConstructor = new () => Dictation;
+    const browser = window as unknown as {
+      SpeechRecognition?: DictationConstructor;
+      webkitSpeechRecognition?: DictationConstructor;
+    };
+    const Recognition =
+      browser.SpeechRecognition || browser.webkitSpeechRecognition;
+    if (!Recognition) {
+      setToast("Dictation is not available in this desktop runtime.");
+      return;
+    }
+    const recognition = new Recognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = navigator.language || "en-US";
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((result) => result[0]?.transcript || "")
+        .join(" ")
+        .trim();
+      if (transcript)
+        setDraft((current) => `${current}${current ? " " : ""}${transcript}`);
+    };
+    recognition.onend = () => setDictating(false);
+    recognition.onerror = () => {
+      setDictating(false);
+      setToast(
+        "Dictation could not hear a usable message. Try again or type your note.",
+      );
+    };
+    setDictating(true);
+    recognition.start();
   }
   if (!state)
     return (
@@ -1335,6 +1382,18 @@ export function App() {
                       >
                         <Smile size={21} />
                       </IconButton>
+                      <IconButton
+                        label={
+                          dictating
+                            ? "Listening for dictation"
+                            : "Dictate message"
+                        }
+                        className={dictating ? "icon-button dictating" : ""}
+                        onClick={dictate}
+                        disabled={dictating}
+                      >
+                        <Mic size={20} />
+                      </IconButton>
                       <textarea
                         ref={input}
                         aria-label={`Message ${conv.name}`}
@@ -1384,7 +1443,9 @@ export function App() {
                     <div className="composer-hint">
                       {busy
                         ? "Work is in progress. Send a constraint, context, or follow-up."
-                        : "Enter to send · Shift + Enter for a new line"}
+                        : dictating
+                          ? "Listening. Review the editable transcript before sending."
+                          : "Enter to send · Shift + Enter for a new line"}
                     </div>
                     <input
                       ref={fileInput}
