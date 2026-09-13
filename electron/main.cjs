@@ -17,7 +17,11 @@ let service,
   window,
   closing = false;
 
-if (!app.requestSingleInstanceLock()) app.quit();
+// Electron can occasionally report a stale single-instance lock after an
+// installer update. Roster's service lock is the authoritative guard for its
+// local data directory, so let startup reach that guard instead of exiting
+// without a window.
+app.requestSingleInstanceLock();
 
 function focusWindow() {
   if (!service) return;

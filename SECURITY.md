@@ -19,4 +19,4 @@ We will acknowledge a report, assess the impact, work on a fix, and coordinate d
 
 ## Security model
 
-Roster is designed for a single user on a local machine. Read the detailed [security architecture](docs/SECURITY.md) for local API boundaries, provider approvals, workspace constraints, and credential handling.
+Roster is designed for a single user on a local machine. Read the detailed [security architecture](docs/SECURITY.md) for local API boundaries, provider approvals, workspace constraints, and credential handling. The optional [private phone companion](docs/MOBILE_REMOTE.md) uses Tailscale Serve, one-time pairing, identity-bound sessions, and a server-enforced mobile API allowlist.

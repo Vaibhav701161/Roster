@@ -1,0 +1,18 @@
+{
+  "name": "Roster Private Companion",
+  "short_name": "Roster",
+  "description": "Private companion for your local Roster workspace.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7f9f6",
+  "theme_color": "#e8503a",
+  "icons": [
+    {
+      "src": "/roster-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -113,6 +113,10 @@ flowchart LR
 
 The renderer and loopback service are internal parts of the desktop application. Roster does not expose a hosted control plane or send telemetry.
 
+## Private phone companion
+
+Roster can also be installed as a private PWA companion on iPhone or Android. Agents continue running on the desktop while the phone can follow live work, send guidance, stop or retry a task, and answer approvals. It uses [Tailscale Serve](https://tailscale.com/docs/features/tailscale-serve) to keep the service bound to loopback and reachable only through the owner's tailnet. Pairing links are one-time and expire in 15 minutes. Read [Mobile remote companion](docs/MOBILE_REMOTE.md) for setup, permissions, and security properties.
+
 ## Development
 
 ```sh
@@ -135,7 +139,7 @@ Roster binds its API to loopback, validates requests, scopes workspace operation
 
 ## Current scope
 
-- Roster is desktop-only and local-first.
+- Roster is local-first. Its optional phone companion is a private remote control for a running desktop, not a mobile agent runtime.
 - Attachments are readable text and source files, limited to five files of 200 KB each.
 - Git-backed coding work runs in task-scoped worktrees. Roster does not silently merge branches into the user's checkout.
 - Reviews require a structured pass, concerns, fail, or unable-to-verify verdict. Concerns and failures can trigger up to three repair cycles before Roster asks for help.
@@ -150,6 +154,7 @@ Roster binds its API to loopback, validates requests, scopes workspace operation
 - [Runtime](docs/RUNTIME.md)
 - [Orchestration](docs/ORCHESTRATION.md)
 - [Security](SECURITY.md)
+- [Mobile remote companion](docs/MOBILE_REMOTE.md)
 - [Development](docs/DEVELOPMENT.md)
 - [Release checklist](docs/RELEASE_CHECKLIST.md)
 

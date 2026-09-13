@@ -31,11 +31,12 @@ This document tracks the product work from the current engineering and messenger
 
 ## Experience work
 
-- [x] Complete the WhatsApp-inspired messenger polish: richer worker identity, reply and reaction interactions, task and receipt cards, improved composer, contact-style roster navigation, and task-aware suggested replies.
+- [x] Complete the conversation-first messenger polish: richer worker identity, reply and reaction interactions, task and receipt cards, improved composer, contact-style roster navigation, and task-aware suggested replies.
 - [x] Improve responsive desktop layouts, keyboard access, contrast, theme handling, and performance.
 
-## Desktop platform work
+## Platform work
 
+- [x] Add a private installable phone companion with Tailscale identity-bound pairing and server-enforced mobile permissions.
 - [ ] Maintain Windows, Linux, and macOS packaging parity.
 
 ## Validation

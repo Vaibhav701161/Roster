@@ -120,6 +120,18 @@ export function Mark({ size = 36 }: { size?: number }) {
     </svg>
   );
 }
+function PairingScreen({ error }: { error: string }) {
+  return (
+    <main className="pairing-screen">
+      <Mark size={58} />
+      <h1>
+        {error ? "Pairing could not be completed" : "Pairing your companion"}
+      </h1>
+      <p>{error || "Verifying this phone through your private network."}</p>
+      {!error && <RefreshCw className="pairing-spin" size={21} />}
+    </main>
+  );
+}
 export function Avatar({
   name,
   color = "green",
@@ -271,7 +283,14 @@ export function App() {
     [searchOpen, setSearchOpen] = useState(false),
     [menu, setMenu] = useState(false),
     [emoji, setEmoji] = useState(false),
-    [toast, setToast] = useState("");
+    [toast, setToast] = useState(""),
+    [pairing, setPairing] = useState(() =>
+      Boolean(new URLSearchParams(window.location.hash.slice(1)).get("pair")),
+    ),
+    [pairError, setPairError] = useState("");
+  const pairingToken = useRef(
+    new URLSearchParams(window.location.hash.slice(1)).get("pair") || "",
+  ).current;
   const selectedRef = useRef(selected);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -347,6 +366,28 @@ export function App() {
     [refresh],
   );
   useEffect(() => {
+    if (pairingToken) {
+      api(
+        "/remote/session",
+        "POST",
+        {},
+        { Authorization: `Bearer ${pairingToken}` },
+      )
+        .then(async () => {
+          window.history.replaceState(
+            {},
+            "",
+            window.location.pathname + window.location.search,
+          );
+          setPairing(false);
+          await refresh();
+        })
+        .catch((error) => {
+          setPairError((error as Error).message);
+          setConnected(false);
+        });
+      return;
+    }
     refresh();
     const events = new EventSource("/api/events");
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -366,7 +407,7 @@ export function App() {
       events.close();
       clearTimeout(timer);
     };
-  }, [refresh]);
+  }, [refresh, pairingToken]);
   useEffect(() => {
     if (!selected) {
       setMessages([]);
@@ -442,6 +483,10 @@ export function App() {
     return window.rosterDesktop.onOpenSettings(() => setView("Settings"));
   }, []);
   useEffect(() => {
+    if ("serviceWorker" in navigator && window.isSecureContext)
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }, []);
+  useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
@@ -449,7 +494,7 @@ export function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
-        setWorker({});
+        if (!stateRef.current?.settings.remoteSession) setWorker({});
       }
       if (e.key === "Escape") {
         setProfile(false);
@@ -595,6 +640,7 @@ export function App() {
     setDictating(true);
     recognition.start();
   }
+  if (pairing && !state) return <PairingScreen error={pairError} />;
   if (!state)
     return (
       <div className="boot">
@@ -612,6 +658,7 @@ export function App() {
         )}
       </div>
     );
+  const remoteSession = state.settings.remoteSession;
   const nav = [
     { name: "Chats", icon: MessageCircle },
     { name: "Roster", icon: UserRound },
@@ -620,7 +667,11 @@ export function App() {
     { name: "Needs You", icon: AlertCircle },
     { name: "Files", icon: Folder },
     { name: "Activity", icon: Activity },
-  ] as const;
+  ].filter(
+    ({ name }) =>
+      !remoteSession ||
+      ["Chats", "Work", "Needs You", "Activity"].includes(name),
+  ) as { name: Exclude<View, "Settings">; icon: typeof MessageCircle }[];
   const needsYou = state.needsYou.length;
   const conversations = state.conversations.filter(
     (c) =>
@@ -657,12 +708,15 @@ export function App() {
         </button>
         <button
           className="workspace-switch"
-          onClick={() => setView("Settings")}
+          onClick={() => !remoteSession && setView("Settings")}
+          disabled={remoteSession}
         >
           <span className="workspace-icon">P</span>
           <span>
             <strong>{state.settings.workspaceName}</strong>
-            <small>Local workspace</small>
+            <small>
+              {remoteSession ? "Private companion" : "Local workspace"}
+            </small>
           </span>
           <ChevronDown size={14} />
         </button>
@@ -696,23 +750,27 @@ export function App() {
             <span className="tiny-dot" />
             <span>Your work. Your machine.</span>
           </div>
-          <button
-            className={`settings-nav ${view === "Settings" ? "active" : ""}`}
-            aria-label="Settings"
-            title="Settings"
-            onClick={() => setView("Settings")}
-          >
-            <SettingsIcon size={19} />
-            <span>Settings</span>
-          </button>
-          <button className="account" onClick={() => setView("Settings")}>
-            <Avatar name="You" color="peach" />
-            <span>
-              <strong>Your workspace</strong>
-              <small>Personal account</small>
-            </span>
-            <MoreHorizontal size={18} />
-          </button>
+          {!remoteSession && (
+            <>
+              <button
+                className={`settings-nav ${view === "Settings" ? "active" : ""}`}
+                aria-label="Settings"
+                title="Settings"
+                onClick={() => setView("Settings")}
+              >
+                <SettingsIcon size={19} />
+                <span>Settings</span>
+              </button>
+              <button className="account" onClick={() => setView("Settings")}>
+                <Avatar name="You" color="peach" />
+                <span>
+                  <strong>Your workspace</strong>
+                  <small>Personal account</small>
+                </span>
+                <MoreHorizontal size={18} />
+              </button>
+            </>
+          )}
         </div>
       </nav>
       <main className="main" id="main-content" tabIndex={-1}>
@@ -720,6 +778,12 @@ export function App() {
           <div className="connection-banner">
             <RefreshCw size={15} /> Reconnecting to your workspace. Saved work
             is safe.
+          </div>
+        )}
+        {remoteSession && (
+          <div className="remote-banner" role="status">
+            <LockKeyhole size={15} /> Private companion connected. This phone
+            can message workers, review progress, and answer approvals.
           </div>
         )}
         {error && (
@@ -743,9 +807,11 @@ export function App() {
                   >
                     <Search size={19} />
                   </IconButton>
-                  <IconButton label="New chat" onClick={() => setWorker({})}>
-                    <PenLine size={19} />
-                  </IconButton>
+                  {!remoteSession && (
+                    <IconButton label="New chat" onClick={() => setWorker({})}>
+                      <PenLine size={19} />
+                    </IconButton>
+                  )}
                 </div>
               </header>
               <div className="search-field">
@@ -847,7 +913,7 @@ export function App() {
                         ? "Try another name."
                         : "Add your first worker and start a conversation."}
                     </p>
-                    {!state.agents.length && (
+                    {!remoteSession && !state.agents.length && (
                       <button
                         className="text-button"
                         onClick={() => setWorker({})}

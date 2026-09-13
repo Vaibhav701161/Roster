@@ -98,6 +98,7 @@ export type Settings = {
   keyStorage: "encrypted" | "session";
   directory: string;
   workspaceName: string;
+  remoteSession: boolean;
 };
 export type State = {
   agents: Agent[];

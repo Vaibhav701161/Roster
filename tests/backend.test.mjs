@@ -24,6 +24,43 @@ async function fixture(runner, options = {}) {
   };
   return { app, request, directory };
 }
+async function remoteRequest(
+  app,
+  route,
+  { method = "GET", headers = {}, body } = {},
+) {
+  const port = app.server.address().port;
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        path: "/api" + route,
+        method,
+        headers: {
+          Host: "roster.example.ts.net",
+          "Content-Type": "application/json",
+          "Tailscale-User-Login": "owner@example.com",
+          ...headers,
+        },
+      },
+      (response) => {
+        let text = "";
+        response.on("data", (chunk) => (text += chunk));
+        response.on("end", () =>
+          resolve({
+            status: response.statusCode,
+            headers: response.headers,
+            data: text ? JSON.parse(text) : null,
+          }),
+        );
+      },
+    );
+    request.on("error", reject);
+    if (body !== undefined) request.write(JSON.stringify(body));
+    request.end();
+  });
+}
 async function until(fn, timeout = 5000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -2333,3 +2370,101 @@ test(
     vault.setNamed("mcp:other", "");
   },
 );
+
+test("private phone companion uses identity-bound pairing and a restricted API", async () => {
+  const commands = [];
+  const f = await fixture(async () => ({ text: "Remote task response" }), {
+    remoteCommand: async (command, args) => {
+      commands.push([command, args]);
+      if (args[0] === "status")
+        return JSON.stringify({
+          BackendState: "Running",
+          Self: { DNSName: "roster.example.ts.net." },
+        });
+      return "";
+    },
+  });
+  try {
+    const workerResult = await f.request(
+      "/agents",
+      "POST",
+      worker("Remote Alex"),
+    );
+    const deniedBeforeEnable = await remoteRequest(f.app, "/state");
+    assert.equal(deniedBeforeEnable.status, 403);
+
+    const enabled = await f.request("/remote/enable", "POST", {});
+    assert.equal(enabled.url, "https://roster.example.ts.net");
+    assert.deepEqual(commands.at(-1), [
+      "tailscale",
+      [
+        "serve",
+        "--https=443",
+        "--set-path=/",
+        "--bg",
+        `http://127.0.0.1:${f.app.server.address().port}`,
+      ],
+    ]);
+    const pairing = await f.request("/remote/pairings", "POST", {});
+    const secret = new URL(pairing.url).hash.slice("#pair=".length);
+    assert.match(secret, /^[A-Za-z0-9_-]{40,120}$/);
+    assert.ok(
+      !JSON.stringify(f.app.store.setting("remotePairings", [])).includes(
+        secret,
+      ),
+    );
+
+    const paired = await remoteRequest(f.app, "/remote/session", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${secret}` },
+      body: {},
+    });
+    assert.equal(paired.status, 200);
+    const cookie = String(paired.headers["set-cookie"]?.[0] || "").split(
+      ";",
+    )[0];
+    assert.match(
+      String(paired.headers["set-cookie"]?.[0]),
+      /HttpOnly; Secure; SameSite=Strict/,
+    );
+
+    const state = await remoteRequest(f.app, "/state", {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(state.status, 200);
+    assert.equal(state.data.settings.remoteSession, true);
+    assert.equal(state.data.settings.directory, "");
+    assert.deepEqual(state.data.integrations, []);
+    assert.equal(state.data.agents[0].instructions, "");
+
+    const blocked = await remoteRequest(f.app, "/agents", {
+      method: "POST",
+      headers: { Cookie: cookie },
+      body: worker("Blocked worker"),
+    });
+    assert.equal(blocked.status, 403);
+
+    const message = await remoteRequest(
+      f.app,
+      `/conversations/${workerResult.conversationId}/messages`,
+      {
+        method: "POST",
+        headers: { Cookie: cookie },
+        body: { content: "Continue remotely." },
+      },
+    );
+    assert.equal(message.status, 200);
+
+    await f.request("/remote/disable", "POST", {});
+    const afterDisable = await remoteRequest(f.app, "/state", {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(afterDisable.status, 403);
+    assert.deepEqual(commands.at(-1), [
+      "tailscale",
+      ["serve", "--https=443", "--set-path=/", "off"],
+    ]);
+  } finally {
+    await f.app.close();
+  }
+});

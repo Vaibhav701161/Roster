@@ -2,10 +2,14 @@ export async function api<T = unknown>(
   path: string,
   method = "GET",
   data?: unknown,
+  extraHeaders: Record<string, string> = {},
 ): Promise<T> {
   const response = await fetch("/api" + path, {
     method,
-    headers: method === "GET" ? {} : { "Content-Type": "application/json" },
+    headers: {
+      ...(method === "GET" ? {} : { "Content-Type": "application/json" }),
+      ...extraHeaders,
+    },
     ...(data === undefined ? {} : { body: JSON.stringify(data) }),
   });
   if (!response.ok) {

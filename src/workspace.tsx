@@ -1105,6 +1105,124 @@ function ActivityView({ state }: { state: State }) {
     </>
   );
 }
+function RemoteAccessPanel({ act, notify }: Pick<Props, "act" | "notify">) {
+  const [status, setStatus] = useState<{
+    available: boolean;
+    connected: boolean;
+    enabled: boolean;
+    url: string;
+  } | null>(null);
+  const [pairingUrl, setPairingUrl] = useState("");
+  const load = async () => {
+    try {
+      setStatus(await api("/remote/status"));
+    } catch {
+      setStatus({
+        available: false,
+        connected: false,
+        enabled: false,
+        url: "",
+      });
+    }
+  };
+  useEffect(() => {
+    void load();
+  }, []);
+  const copy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      notify("Private pairing link copied.");
+    } catch {
+      notify("Copy the private pairing link from the field.");
+    }
+  };
+  return (
+    <section className="settings-section">
+      <h2>Private phone companion</h2>
+      <p>
+        Check progress, guide workers, and answer approvals from your phone.
+        Roster keeps execution on this desktop and shares it only through your
+        private Tailscale network.
+      </p>
+      {!status?.available ? (
+        <div className="provider-detail">
+          Install Tailscale and sign this desktop and your phone into the same
+          private tailnet, then refresh this page.
+        </div>
+      ) : !status.connected ? (
+        <div className="provider-detail">
+          Tailscale is installed but this desktop is not connected to a tailnet.
+        </div>
+      ) : status.enabled ? (
+        <div className="provider-detail">
+          <strong>Private remote access is on.</strong>
+          <small>{status.url}</small>
+          <div className="button-row">
+            <button
+              className="secondary"
+              onClick={() =>
+                act(async () => {
+                  const result = await api<{ url: string }>(
+                    "/remote/pairings",
+                    "POST",
+                    {},
+                  );
+                  setPairingUrl(result.url);
+                  await copy(result.url);
+                })
+              }
+            >
+              Pair a phone
+            </button>
+            <button
+              className="text-button"
+              onClick={() =>
+                act(async () => {
+                  await api("/remote/disable", "POST", {});
+                  setPairingUrl("");
+                  await load();
+                  notify("Private remote access is off.");
+                })
+              }
+            >
+              Turn off access
+            </button>
+          </div>
+          {pairingUrl && (
+            <label className="field">
+              Private pairing link, valid for 15 minutes
+              <input
+                value={pairingUrl}
+                readOnly
+                onFocus={(event) => event.currentTarget.select()}
+              />
+              <small>
+                Open this link only on a phone signed into your tailnet. It
+                works once and is never saved by Roster.
+              </small>
+            </label>
+          )}
+        </div>
+      ) : (
+        <div className="button-row">
+          <button
+            className="primary"
+            onClick={() =>
+              act(async () => {
+                await api("/remote/enable", "POST", {});
+                await load();
+                notify("Private remote access is ready to pair.");
+              })
+            }
+          >
+            Enable private access
+          </button>
+          <small>Only devices in your tailnet can reach this companion.</small>
+        </div>
+      )}
+    </section>
+  );
+}
 function SettingsView({ state, act, notify, refresh }: Props) {
   const [testing, setTesting] = useState(""),
     [result, setResult] = useState(""),
@@ -1159,6 +1277,7 @@ function SettingsView({ state, act, notify, refresh }: Props) {
         </div>
       </header>
       <div className="settings-content">
+        <RemoteAccessPanel act={act} notify={notify} />
         <section className="settings-section">
           <h2>Make yourself at home</h2>
           <p>A few personal touches for your everyday work.</p>

@@ -2,6 +2,7 @@ import express from "express";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { createHash, randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -20,6 +21,11 @@ import {
   saveIntegrationToken,
   supportsIntegrationToken,
 } from "./integrations.mjs";
+import {
+  disableRemoteAccess,
+  enableRemoteAccess,
+  remoteStatus,
+} from "./remote.mjs";
 import {
   environmentValue,
   inspectProject,
@@ -93,6 +99,7 @@ export async function createServer({
   githubClient,
   integrationFetch,
   integrationCommand,
+  remoteCommand,
 } = {}) {
   const releaseLock = acquireLock(directory);
   let store;
@@ -118,28 +125,99 @@ export async function createServer({
     (taskId, type, detail) => engine.event(taskId, type, detail),
     githubClient,
   );
+  const loopbackHosts = new Set(["127.0.0.1", "localhost", "[::1]"]);
+  const hashRemoteSecret = (value) =>
+    createHash("sha256").update(String(value)).digest("hex");
+  const remoteRecords = (key) => {
+    const value = store.setting(key, []);
+    return Array.isArray(value) ? value : [];
+  };
+  const remoteIdentity = (req) => {
+    const value = String(req.headers["tailscale-user-login"] || "").trim();
+    return value.length > 0 && value.length <= 320 ? value : "";
+  };
+  const remoteSession = (req) => {
+    const identity = remoteIdentity(req);
+    const cookie = String(req.headers.cookie || "")
+      .split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith("roster_remote_session="))
+      ?.slice("roster_remote_session=".length);
+    if (!identity || !cookie) return null;
+    const hashed = hashRemoteSecret(cookie);
+    const record = remoteRecords("remoteSessions").find(
+      (item) =>
+        item?.hash === hashed &&
+        item?.identity === identity &&
+        Number(item.expiresAt || 0) > Date.now(),
+    );
+    return record ? { identity, hash: hashed } : null;
+  };
+  const remoteApiAllowed = (req) => {
+    const pathName = req.path;
+    if (pathName === "/api/remote/session") return req.method === "POST";
+    if (pathName === "/api/remote/signout") return req.method === "POST";
+    if (["GET", "HEAD"].includes(req.method))
+      return (
+        /^\/api\/(state|events)$/.test(pathName) ||
+        /^\/api\/conversations\/[^/]+\/messages$/.test(pathName) ||
+        /^\/api\/tasks\/[^/]+(?:\/(?:inspection|receipt|browser-checks))?$/.test(
+          pathName,
+        ) ||
+        /^\/api\/files\/[^/]+$/.test(pathName)
+      );
+    if (req.method === "PATCH")
+      return /^\/api\/conversations\/[^/]+$/.test(pathName);
+    if (req.method !== "POST") return false;
+    return (
+      /^\/api\/conversations\/[^/]+\/(?:messages|stop)$/.test(pathName) ||
+      /^\/api\/messages\/[^/]+\/reactions$/.test(pathName) ||
+      /^\/api\/approvals\/[^/]+$/.test(pathName) ||
+      /^\/api\/tasks\/[^/]+\/(?:cancel|retry|verify)$/.test(pathName)
+    );
+  };
   const app = express();
   app.disable("x-powered-by");
   app.use((req, res, next) => {
     const host = req.headers.host?.split(":")[0];
-    if (!["127.0.0.1", "localhost", "[::1]"].includes(host))
-      return res.status(403).json({ error: "Local access only." });
+    const local = loopbackHosts.has(host);
+    const remote =
+      !local &&
+      store.setting("remoteAccessEnabled", false) === true &&
+      !!remoteIdentity(req);
+    req.rosterRemote = remote;
+    if (!local && !remote)
+      return res.status(403).json({ error: "Private local access only." });
     const origin = req.headers.origin;
-    const sameOrigin = origin === `http://${req.headers.host}`;
+    const sameOrigin =
+      origin === `${remote ? "https" : "http"}://${req.headers.host}`;
     const viteOrigin = /^http:\/\/(127\.0\.0\.1|localhost):5173$/.test(
       origin || "",
     );
-    if (origin && !sameOrigin && !viteOrigin)
+    if (origin && !sameOrigin && !(local && viteOrigin))
       return res.status(403).json({ error: "Untrusted origin." });
     if (req.headers["sec-fetch-site"] === "cross-site")
       return res.status(403).json({ error: "Cross-site access denied." });
     if (!["GET", "HEAD"].includes(req.method) && !req.is("application/json"))
       return res.status(415).json({ error: "JSON requests required." });
+    if (
+      remote &&
+      req.path.startsWith("/api/") &&
+      req.path !== "/api/remote/session" &&
+      !remoteSession(req)
+    )
+      return res
+        .status(401)
+        .json({ error: "Pair this phone before using Roster." });
+    if (remote && req.path.startsWith("/api/") && !remoteApiAllowed(req))
+      return res
+        .status(403)
+        .json({ error: "This action remains available only on the desktop." });
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; worker-src 'self'; frame-ancestors 'none'",
     );
     next();
   });
@@ -310,7 +388,7 @@ export async function createServer({
     }
     return true;
   };
-  function snapshot() {
+  function snapshot(remote = false) {
     const tasks = store.all(
       "SELECT id,conversation_id,message_id,owner_id,title,status,kind,workspace,error,verification,created_at,started_at,completed_at,'' result,'' objective,root_task_id,repository,base_commit,branch,worktree_path,(SELECT COUNT(*) FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=tasks.id) criteria_total,(SELECT COUNT(*) FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=tasks.id AND c.status='pass') criteria_passed,EXISTS(SELECT 1 FROM work_receipts r WHERE r.task_id=tasks.id) has_receipt FROM tasks ORDER BY CASE WHEN status IN ('running','waiting_approval','queued','waiting_dependency') THEN 0 ELSE 1 END,created_at DESC LIMIT 500",
     );
@@ -341,63 +419,223 @@ export async function createServer({
       `SELECT c.*, (SELECT substr(content,1,140) FROM messages WHERE conversation_id=c.id ORDER BY rowid DESC LIMIT 1) preview,(SELECT COUNT(*) FROM messages WHERE conversation_id=c.id AND role='assistant' AND created_at>COALESCE(c.read_at,c.created_at)) unread FROM conversations c ORDER BY pinned DESC,updated_at DESC`,
     );
     return {
-      agents,
-      teams,
+      agents: remote
+        ? agents.map(
+            ({
+              id,
+              name,
+              role,
+              description,
+              color,
+              benched,
+              status,
+              created_at,
+            }) => ({
+              id,
+              name,
+              role,
+              description,
+              color,
+              benched,
+              status,
+              created_at,
+              instructions: "",
+              provider: "",
+              permission_level: "standard",
+              workspace: "",
+              avatar_data: "",
+            }),
+          )
+        : agents,
+      teams: remote ? teams.map((team) => ({ ...team, workspace: "" })) : teams,
       conversations,
-      tasks,
+      tasks: remote
+        ? tasks.map((task) => ({ ...task, workspace: "", worktree_path: "" }))
+        : tasks,
       approvals: store.all(
         "SELECT * FROM approvals ORDER BY created_at DESC LIMIT 100",
       ),
       needsYou: store.all(
         "SELECT * FROM attention_items WHERE status='open' ORDER BY created_at DESC LIMIT 100",
       ),
-      memories: store.all("SELECT * FROM memories"),
-      integrations: store
-        .all("SELECT * FROM integrations ORDER BY name")
-        .map((integration) => ({
-          ...integration,
-          credential_configurable: supportsIntegrationToken(
-            integration.provider,
+      memories: remote ? [] : store.all("SELECT * FROM memories"),
+      integrations: remote
+        ? []
+        : store
+            .all("SELECT * FROM integrations ORDER BY name")
+            .map((integration) => ({
+              ...integration,
+              credential_configurable: supportsIntegrationToken(
+                integration.provider,
+              ),
+              credential_configured: integrationTokenConfigured(
+                vault,
+                integration.provider,
+              ),
+            })),
+      githubOwnership: remote
+        ? []
+        : store.all(
+            "SELECT * FROM github_ownership ORDER BY updated_at DESC LIMIT 100",
           ),
-          credential_configured: integrationTokenConfigured(
-            vault,
-            integration.provider,
-          ),
-        })),
-      githubOwnership: store.all(
-        "SELECT * FROM github_ownership ORDER BY updated_at DESC LIMIT 100",
-      ),
-      mcpConnections: store.all(
-        "SELECT * FROM mcp_connections ORDER BY updated_at DESC",
-      ),
-      projectProfiles: store
-        .all(
-          "SELECT id,workspace,name,resources_json,updated_at FROM project_profiles ORDER BY updated_at DESC",
-        )
-        .map((profile) => ({
-          ...profile,
-          environment: environmentValue(
-            projectEnvironment(store, profile.workspace),
-          ),
-          resources: JSON.parse(profile.resources_json || "[]"),
-        })),
-      providers: engine.health,
+      mcpConnections: remote
+        ? []
+        : store.all("SELECT * FROM mcp_connections ORDER BY updated_at DESC"),
+      projectProfiles: remote
+        ? []
+        : store
+            .all(
+              "SELECT id,workspace,name,resources_json,updated_at FROM project_profiles ORDER BY updated_at DESC",
+            )
+            .map((profile) => ({
+              ...profile,
+              environment: environmentValue(
+                projectEnvironment(store, profile.workspace),
+              ),
+              resources: JSON.parse(profile.resources_json || "[]"),
+            })),
+      providers: remote ? [] : engine.health,
       planning: [...engine.planning.keys()],
       settings: {
         theme: store.setting("theme", "light"),
         wallpaper: store.setting("wallpaper", "classic"),
         parallelLimit: store.setting("parallelLimit", 2),
         repairLimit: store.setting("repairLimit", 3),
-        compatible: store.setting("compatible"),
-        hasKey: !!providerKey(store, vault),
-        canSaveKey: !!vault,
-        keyStorage: vault.mode || "encrypted",
-        directory,
+        compatible: remote ? null : store.setting("compatible"),
+        hasKey: remote ? false : !!providerKey(store, vault),
+        canSaveKey: remote ? false : !!vault,
+        keyStorage: remote ? "encrypted" : vault.mode || "encrypted",
+        directory: remote ? "" : directory,
         workspaceName: store.setting("workspaceName", "Personal workspace"),
+        remoteSession: remote,
       },
     };
   }
-  app.get("/api/state", (req, res) => res.json(snapshot()));
+  app.get("/api/state", (req, res) => res.json(snapshot(!!req.rosterRemote)));
+  const cleanRemoteRecords = (key) => {
+    const records = remoteRecords(key).filter(
+      (record) => Number(record?.expiresAt || 0) > Date.now(),
+    );
+    store.setSetting(key, records);
+    return records;
+  };
+  const requireDesktop = (req) => {
+    if (req.rosterRemote)
+      throw new Error("This action remains available only on the desktop.");
+  };
+  const remoteInfo = async () => {
+    const network = await remoteStatus(remoteCommand);
+    const enabled = store.setting("remoteAccessEnabled", false) === true;
+    return {
+      ...network,
+      enabled,
+      url: enabled
+        ? store.setting("remoteAccessUrl", network.url) || network.url
+        : "",
+    };
+  };
+  app.get("/api/remote/status", async (req, res) => {
+    requireDesktop(req);
+    res.json(await remoteInfo());
+  });
+  app.post("/api/remote/enable", async (req, res) => {
+    requireDesktop(req);
+    const address = server?.address();
+    const localPort = typeof address === "object" && address ? address.port : 0;
+    if (!localPort)
+      throw new Error("Roster is still starting. Try again shortly.");
+    const network = await enableRemoteAccess(localPort, remoteCommand);
+    store.setSetting("remoteAccessEnabled", true);
+    store.setSetting("remoteAccessUrl", network.url);
+    changed();
+    res.json({ ...network, enabled: true });
+  });
+  app.post("/api/remote/disable", async (req, res) => {
+    requireDesktop(req);
+    await disableRemoteAccess(remoteCommand);
+    store.setSetting("remoteAccessEnabled", false);
+    store.setSetting("remoteAccessUrl", "");
+    store.setSetting("remotePairings", []);
+    store.setSetting("remoteSessions", []);
+    changed();
+    res.json({ ok: true });
+  });
+  app.post("/api/remote/pairings", (req, res) => {
+    requireDesktop(req);
+    if (store.setting("remoteAccessEnabled", false) !== true)
+      throw new Error("Enable private remote access before pairing a phone.");
+    const url = store.setting("remoteAccessUrl", "");
+    if (!/^https:\/\/[a-z0-9][a-z0-9.-]{0,252}$/i.test(url))
+      throw new Error(
+        "Roster could not determine this desktop's private address.",
+      );
+    const secret = randomBytes(32).toString("base64url");
+    const expiresAt = Date.now() + 15 * 60 * 1000;
+    const pairings = cleanRemoteRecords("remotePairings").slice(-4);
+    pairings.push({ hash: hashRemoteSecret(secret), expiresAt });
+    store.setSetting("remotePairings", pairings);
+    res.json({ url: `${url}/#pair=${secret}`, expiresAt });
+  });
+  app.post("/api/remote/session", (req, res) => {
+    if (!req.rosterRemote)
+      return res
+        .status(403)
+        .json({ error: "Pair from Roster's private address." });
+    const authorization = String(req.headers.authorization || "");
+    const secret = authorization.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length).trim()
+      : "";
+    if (!/^[A-Za-z0-9_-]{40,120}$/.test(secret))
+      return res
+        .status(401)
+        .json({ error: "Pairing link is invalid or expired." });
+    const hash = hashRemoteSecret(secret);
+    const pairings = cleanRemoteRecords("remotePairings");
+    if (!pairings.some((pairing) => pairing.hash === hash))
+      return res
+        .status(401)
+        .json({ error: "Pairing link is invalid or expired." });
+    store.setSetting(
+      "remotePairings",
+      pairings.filter((pairing) => pairing.hash !== hash),
+    );
+    const identity = remoteIdentity(req);
+    const sessionSecret = randomBytes(32).toString("base64url");
+    const sessions = cleanRemoteRecords("remoteSessions")
+      .filter((session) => session.identity !== identity)
+      .slice(-9);
+    sessions.push({
+      hash: hashRemoteSecret(sessionSecret),
+      identity,
+      expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
+    });
+    store.setSetting("remoteSessions", sessions);
+    res.setHeader(
+      "Set-Cookie",
+      `roster_remote_session=${sessionSecret}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${30 * 24 * 60 * 60}`,
+    );
+    res.json({ ok: true });
+  });
+  app.post("/api/remote/signout", (req, res) => {
+    if (!req.rosterRemote)
+      return res.status(403).json({ error: "Use the private Roster address." });
+    const session = remoteSession(req);
+    if (!session)
+      return res
+        .status(401)
+        .json({ error: "Pair this phone before using Roster." });
+    store.setSetting(
+      "remoteSessions",
+      cleanRemoteRecords("remoteSessions").filter(
+        (record) => record.hash !== session.hash,
+      ),
+    );
+    res.setHeader(
+      "Set-Cookie",
+      "roster_remote_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
+    );
+    res.json({ ok: true });
+  });
   app.post("/api/projects/inspect", (req, res) => {
     const target = workspace(
       z.object({ workspace: z.string().max(1000) }).parse(req.body).workspace,
