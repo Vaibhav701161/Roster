@@ -19,6 +19,7 @@ This document tracks the product work from the current engineering and messenger
 - [x] Discover remote MCP servers using initialization and protected-resource metadata without sending credentials.
 - [x] Execute discovered remote HTTP and local stdio MCP tools through explicit user actions with bounded payloads and local audit records.
 - [x] Restrict MCP servers to selected project profiles and require an allowed workspace for scoped tool calls.
+- [x] Attach explicit MCP tool results to completed work as attributed external evidence without inferring that the result proves completion.
 - [x] Track connected GitHub pull requests through review, CI, conflict, and merge state with Needs You escalation.
 - [x] Publish an explicitly approved task branch as a GitHub pull request without force operations or automatic merges.
 - [x] Queue GitHub-driven owner repair and independent re-review in the existing isolated task branch.

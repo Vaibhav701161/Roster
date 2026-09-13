@@ -1019,6 +1019,40 @@ test("MCP discovery records public capabilities and authorization metadata witho
       ),
       ["issue"],
     );
+    const agent = await f.request(
+      "/agents",
+      "POST",
+      worker("MCP evidence worker", { workspace: scopedWorkspace }),
+    );
+    await f.request(`/conversations/${agent.conversationId}/messages`, "POST", {
+      content: "Fix the sample issue and collect external evidence.",
+    });
+    const task = await until(() =>
+      f.app.store.one(
+        "SELECT * FROM tasks WHERE workspace=? AND status='completed'",
+        [scopedWorkspace],
+      ),
+    );
+    const evidence = await f.request(`/tasks/${task.id}/mcp-evidence`, "POST", {
+      connectionId: publicServer.id,
+      name: "issues.read",
+      arguments: { issue: 42 },
+    });
+    assert.equal(evidence.result.content[0].text, "Issue 42 is open.");
+    assert.equal(
+      f.app.store.one(
+        "SELECT status FROM evidence WHERE task_id=? AND type='external_tool'",
+        [task.id],
+      ).status,
+      "informational",
+    );
+    assert.equal(
+      f.app.store.one(
+        "SELECT c.status FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=? AND c.type='external_tool'",
+        [task.id],
+      ).status,
+      "pending",
+    );
     await assert.rejects(
       () =>
         f.request(`/mcp/${publicServer.id}/tools/call`, "POST", {

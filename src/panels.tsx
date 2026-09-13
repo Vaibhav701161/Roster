@@ -768,9 +768,37 @@ export function TaskPanel({
     >([]),
     [runningBrowserCheck, setRunningBrowserCheck] = useState<string | null>(
       null,
-    );
+    ),
+    [mcpEvidence, setMcpEvidence] = useState<{
+      connectionId: string;
+      name: string;
+      argumentsText: string;
+      result: string;
+    } | null>(null);
   const task =
     detail?.task.id === id ? detail.task : state.tasks.find((t) => t.id === id);
+  const evidenceConnections = task
+    ? state.mcpConnections.filter((connection) => {
+        try {
+          const scopes = JSON.parse(connection.workspace_scope_json || "[]");
+          return !scopes.length || scopes.includes(task.workspace);
+        } catch {
+          return false;
+        }
+      })
+    : [];
+  const evidenceTools = evidenceConnections.flatMap((connection) => {
+    try {
+      return (
+        JSON.parse(connection.tools_json || "[]") as {
+          name: string;
+          description: string;
+        }[]
+      ).map((tool) => ({ ...tool, connectionId: connection.id }));
+    } catch {
+      return [];
+    }
+  });
   useEffect(() => {
     let cancelled = false;
     api<TaskDetail>(`/tasks/${id}`)
@@ -895,6 +923,92 @@ export function TaskPanel({
                       : `Run ${check.name}`}
                   </button>
                 ))}
+              </section>
+            )}
+            {task.status === "completed" && evidenceTools.length > 0 && (
+              <section
+                className="task-github-ownership"
+                aria-label="MCP evidence"
+              >
+                <h3>Connected evidence</h3>
+                <p className="muted-note">
+                  Save a direct result from a project-allowed MCP server as
+                  attributed evidence.
+                </p>
+                {evidenceTools.map((tool) => (
+                  <button
+                    className="text-button"
+                    key={`${tool.connectionId}/${tool.name}`}
+                    onClick={() =>
+                      setMcpEvidence({
+                        connectionId: tool.connectionId,
+                        name: tool.name,
+                        argumentsText: "{}",
+                        result: "",
+                      })
+                    }
+                  >
+                    Collect {tool.name}
+                  </button>
+                ))}
+                {mcpEvidence && (
+                  <form
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      try {
+                        const argumentsValue = JSON.parse(
+                          mcpEvidence.argumentsText,
+                        );
+                        if (
+                          !argumentsValue ||
+                          Array.isArray(argumentsValue) ||
+                          typeof argumentsValue !== "object"
+                        )
+                          throw new Error(
+                            "Tool arguments must be a JSON object.",
+                          );
+                        const response = await api<{ result: unknown }>(
+                          `/tasks/${id}/mcp-evidence`,
+                          "POST",
+                          {
+                            connectionId: mcpEvidence.connectionId,
+                            name: mcpEvidence.name,
+                            arguments: argumentsValue,
+                          },
+                        );
+                        setMcpEvidence({
+                          ...mcpEvidence,
+                          result: JSON.stringify(response.result, null, 2),
+                        });
+                        setDetail(await api<TaskDetail>(`/tasks/${id}`));
+                      } catch (error) {
+                        setError((error as Error).message);
+                      }
+                    }}
+                  >
+                    <label className="field">
+                      Arguments for {mcpEvidence.name}
+                      <textarea
+                        value={mcpEvidence.argumentsText}
+                        onChange={(event) =>
+                          setMcpEvidence({
+                            ...mcpEvidence,
+                            argumentsText: event.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <button className="secondary">Collect evidence</button>
+                    <button
+                      className="text-button"
+                      type="button"
+                      onClick={() => setMcpEvidence(null)}
+                    >
+                      Close
+                    </button>
+                    {mcpEvidence.result && <pre>{mcpEvidence.result}</pre>}
+                  </form>
+                )}
               </section>
             )}
             {task.repository && (

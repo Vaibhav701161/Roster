@@ -452,6 +452,139 @@ export async function createServer({
       throw error;
     }
   });
+  app.post("/api/tasks/:id/mcp-evidence", async (req, res) => {
+    const task = must("tasks", req.params.id);
+    if (task.status !== "completed")
+      throw new Error("Complete the work before collecting MCP evidence.");
+    const body = z
+      .object({
+        connectionId: z.string().min(1).max(100),
+        name: z.string().trim().min(1).max(200),
+        arguments: z.record(z.string(), z.unknown()).default({}),
+      })
+      .parse(req.body);
+    const connection = must("mcp_connections", body.connectionId);
+    if (connection.status !== "available")
+      throw new Error("Connect this MCP server before collecting evidence.");
+    const tools = JSON.parse(connection.tools_json || "[]");
+    if (!tools.some((tool) => tool.name === body.name))
+      throw new Error(
+        "Only tools in this server's discovered registry can run.",
+      );
+    if (JSON.stringify(body.arguments).length > 50000)
+      throw new Error("MCP tool arguments must be 50 KB or smaller.");
+    const scopes = JSON.parse(connection.workspace_scope_json || "[]");
+    if (scopes.length && !scopes.includes(task.workspace))
+      throw new Error(
+        "This MCP server is not connected to this task's project.",
+      );
+    const callId = id();
+    store.run(
+      "INSERT INTO mcp_tool_calls(id,connection_id,tool_name,argument_keys_json,status,created_at) VALUES(?,?,?,?,?,?)",
+      [
+        callId,
+        connection.id,
+        body.name,
+        JSON.stringify(Object.keys(body.arguments).sort()),
+        "running",
+        now(),
+      ],
+    );
+    try {
+      const result =
+        connection.transport === "stdio"
+          ? await callLocalMcpTool(
+              JSON.parse(connection.stdio_json || "{}"),
+              body.name,
+              body.arguments,
+            )
+          : await callMcpTool(connection.url, body.name, body.arguments);
+      const output = JSON.stringify(result, null, 2).slice(0, 200000);
+      store.transaction(() => {
+        store.run(
+          "UPDATE mcp_tool_calls SET status='completed',summary=?,completed_at=? WHERE id=?",
+          [output.slice(0, 2000), now(), callId],
+        );
+        const artifactId = id();
+        store.run(
+          "INSERT INTO artifacts(id,task_id,conversation_id,name,content,size,created_at) VALUES(?,?,?,?,?,?,?)",
+          [
+            artifactId,
+            task.id,
+            task.conversation_id,
+            `${connection.server_name} ${body.name} evidence.json`.slice(
+              0,
+              200,
+            ),
+            output,
+            Buffer.byteLength(output),
+            now(),
+          ],
+        );
+        const outcome = store.one(
+          "SELECT * FROM outcome_contracts WHERE task_id=?",
+          [task.id],
+        );
+        store.run(
+          "INSERT INTO evidence(id,task_id,outcome_id,type,source,status,summary,artifact_id,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+          [
+            id(),
+            task.id,
+            outcome?.id || null,
+            "external_tool",
+            `MCP: ${connection.server_name}/${body.name}`,
+            "informational",
+            `Collected external evidence from ${connection.server_name}/${body.name}.`,
+            artifactId,
+            now(),
+          ],
+        );
+        if (outcome) {
+          const command = `mcp:${connection.id}/${body.name}`;
+          if (
+            !store.one(
+              "SELECT id FROM acceptance_criteria WHERE outcome_id=? AND type='external_tool' AND command=?",
+              [outcome.id, command],
+            )
+          )
+            store.run(
+              "INSERT INTO acceptance_criteria(id,outcome_id,type,description,command,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+              [
+                id(),
+                outcome.id,
+                "external_tool",
+                `Review external evidence from ${connection.server_name}/${body.name}`,
+                command,
+                now(),
+                now(),
+              ],
+            );
+          store.run(
+            "UPDATE outcome_contracts SET status='verifying',updated_at=? WHERE id=?",
+            [now(), outcome.id],
+          );
+          store.run("UPDATE tasks SET verification='unverified' WHERE id=?", [
+            task.id,
+          ]);
+          store.run("DELETE FROM work_receipts WHERE task_id=?", [task.id]);
+        }
+      });
+      engine.event(
+        task.id,
+        "mcp.evidence_collected",
+        `${connection.server_name}/${body.name} output was saved as external evidence.`,
+      );
+      changed();
+      res.json({ id: callId, result });
+    } catch (error) {
+      store.run(
+        "UPDATE mcp_tool_calls SET status='failed',summary=?,completed_at=? WHERE id=?",
+        [cleanError(error), now(), callId],
+      );
+      changed();
+      throw error;
+    }
+  });
   app.get("/api/events", (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
