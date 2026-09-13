@@ -1612,13 +1612,28 @@ test(
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "roster-vault-test-"));
     const vault = createVault(dir);
     vault.set("test-only-secret-not-a-real-key");
-    const disk = fs.readFileSync(
-      path.join(dir, "web-provider-key.enc"),
-      "utf8",
-    );
+    const diskFile = fs.readdirSync(dir).find((name) => name.endsWith(".enc"));
+    assert.ok(diskFile);
+    assert.notEqual(diskFile, "web-provider-key.enc");
+    const disk = fs.readFileSync(path.join(dir, diskFile), "utf8");
     assert.ok(!disk.includes("test-only-secret"));
     assert.equal(createVault(dir).get(), "test-only-secret-not-a-real-key");
     vault.set("");
-    assert.equal(fs.existsSync(path.join(dir, "web-provider-key.enc")), false);
+    assert.equal(
+      fs.readdirSync(dir).some((name) => name.endsWith(".enc")),
+      false,
+    );
+    vault.setNamed("mcp:example", "token-for-one-server");
+    vault.setNamed("mcp:other", "token-for-another-server");
+    assert.equal(
+      createVault(dir).getNamed("mcp:example"),
+      "token-for-one-server",
+    );
+    assert.equal(
+      createVault(dir).getNamed("mcp:other"),
+      "token-for-another-server",
+    );
+    vault.setNamed("mcp:example", "");
+    vault.setNamed("mcp:other", "");
   },
 );
