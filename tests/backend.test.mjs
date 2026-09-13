@@ -1383,6 +1383,39 @@ test("criterion evidence is retained as outcome evidence", async () => {
   }
 });
 
+test("independent review criteria cannot be self-recorded", async () => {
+  const f = await fixture(async () => ({ text: "response" }));
+  try {
+    const a = await f.request("/agents", "POST", worker("Alex"));
+    await f.request(`/conversations/${a.conversationId}/messages`, "POST", {
+      content: "Fix the sample issue.",
+    });
+    const task = await until(() =>
+      f.app.store.one("SELECT * FROM tasks WHERE status='completed'"),
+    );
+    const review = f.app.store.one(
+      "SELECT c.* FROM acceptance_criteria c JOIN outcome_contracts o ON o.id=c.outcome_id WHERE o.task_id=? AND c.type='review'",
+      [task.id],
+    );
+    await assert.rejects(
+      () =>
+        f.request(`/criteria/${review.id}/record`, "POST", {
+          status: "pass",
+          evidence: "This must not substitute for an independent review.",
+        }),
+      /Independent review criteria/,
+    );
+    assert.equal(
+      f.app.store.one("SELECT status FROM acceptance_criteria WHERE id=?", [
+        review.id,
+      ]).status,
+      "pending",
+    );
+  } finally {
+    await f.app.close();
+  }
+});
+
 test("a late acceptance criterion refreshes and then restores the work receipt", async () => {
   const f = await fixture(async () => ({ text: "response" }));
   try {

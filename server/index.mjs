@@ -900,6 +900,10 @@ export async function createServer({
   });
   app.post("/api/criteria/:id/record", (req, res) => {
     const criterion = must("acceptance_criteria", req.params.id);
+    if (criterion.type === "review")
+      throw new Error(
+        "Independent review criteria are completed only by a reviewer verdict.",
+      );
     const body = z
       .object({
         status: z.enum(["pass", "fail"]),

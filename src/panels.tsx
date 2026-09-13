@@ -1001,14 +1001,15 @@ export function TaskPanel({
                     {criterion.status === "pass" ? "Checked" : "Pending"}
                   </span>
                   <strong>{criterion.description}</strong>
-                  {criterion.status === "pending" && (
-                    <button
-                      className="text-button"
-                      onClick={() => setRecordingCriterion(criterion.id)}
-                    >
-                      Record
-                    </button>
-                  )}
+                  {criterion.status === "pending" &&
+                    criterion.type !== "review" && (
+                      <button
+                        className="text-button"
+                        onClick={() => setRecordingCriterion(criterion.id)}
+                      >
+                        Record
+                      </button>
+                    )}
                 </div>
               ))}
               {recordingCriterion && (
